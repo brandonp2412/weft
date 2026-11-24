@@ -56,9 +56,6 @@ func (m *Model) renderTimeline() {
 		if msg.Edited {
 			badge += "  edited"
 		}
-		if msg.Encrypted {
-			badge += "  ◇"
-		}
 		prefix := "  "
 		if msg.ID == m.selected {
 			prefix = "▎ "
@@ -122,9 +119,6 @@ func (m Model) sidebar() string {
 	end := min(len(m.rooms), start+available)
 	for _, r := range m.rooms[start:end] {
 		icon := " "
-		if r.Encrypted {
-			icon = "◇"
-		}
 		if r.Membership == "invite" {
 			icon = "+"
 		}
@@ -156,9 +150,6 @@ func (m Model) mainView() string {
 		title = "Your conversations"
 	}
 	badge := ""
-	if r.Encrypted {
-		badge = "  ◇ encrypted"
-	}
 	if r.Membership == "invite" {
 		badge = "  invitation · /join to accept"
 	}
@@ -192,6 +183,7 @@ func (m Model) mainView() string {
 	for len(rows) < height+3 {
 		rows = append(rows, strings.Repeat(" ", w))
 	}
+	rows = append(rows, m.completionRows()...)
 	contextLine := ""
 	if m.reply != "" {
 		contextLine = "Replying · Esc to cancel"
@@ -215,7 +207,15 @@ func (m Model) mainView() string {
 	if m.statusError {
 		statusStyle = lipgloss.NewStyle().Foreground(red)
 	}
-	rows = append(rows, statusStyle.Render(fit("  "+clip(oneLine(m.status), w-4), w)))
+	status := m.status
+	if m.settings.KeyboardMode == "vi" {
+		label := "VI NORMAL"
+		if m.viInsert {
+			label = "VI INSERT"
+		}
+		status = label + " · " + status
+	}
+	rows = append(rows, statusStyle.Render(fit("  "+clip(oneLine(status), w-4), w)))
 	connection := m.connection
 	if m.busy {
 		connection = "Working… · " + connection
@@ -314,7 +314,11 @@ func (m Model) modalView() string {
 		lines = strings.Split(clean(m.details), "\n")
 	case "help":
 		title = "weft · keyboard & commands"
-		lines = strings.Split(helpText, "\n")
+		text := helpText
+		if m.settings.KeyboardMode == "vi" {
+			text = "Vi: empty draft j/k chats · gg/G first/last chat\nDraft: h/j/k/l move · w/b/e words · 0/^/$ line · gg/G draft ends\nEnter/i/a/I/A insert · ZZ quit · o/O open line · Esc normal · counts: 3j, 2dd\nd/c/y + motion · dd/cc/yy line · D/C to end · x delete\np/P paste · u undo · Ctrl+R redo · : command (empty draft) · / search\n\n" + text
+		}
+		lines = strings.Split(text, "\n")
 		footer = "Enter or Esc returns to chat"
 	}
 	var wrapped []string
@@ -335,6 +339,7 @@ func (m Model) modalView() string {
 }
 
 const helpText = `Enter send · Alt+Enter newline · Ctrl+K room picker
+/ command suggestions · ↑/↓ choose · Tab/Enter complete · Esc dismiss
 Alt+↑/↓ or Ctrl+P/N switch rooms · Ctrl+↑/↓ select message
 PgUp/PgDown scroll · Ctrl+End latest · Ctrl+C quit
 Esc cancel reply/edit or return from a thread

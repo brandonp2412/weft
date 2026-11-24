@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"weft/internal/config"
 	"weft/internal/matrix"
 	"weft/internal/store"
 )
@@ -26,6 +27,14 @@ type resultMsg struct {
 	details string
 }
 type Model struct {
+	settings            config.Settings
+	viInsert            bool
+	viPending           string
+	viCount             int
+	viRegister          string
+	viLinewise          bool
+	viUndo              []viSnapshot
+	viRedo              []viSnapshot
 	focused             bool
 	lastRead            map[string]string
 	backend             *matrix.Backend
@@ -41,6 +50,8 @@ type Model struct {
 	prompt              textinput.Model
 	mode                string
 	promptIndex         int
+	completionIndex     int
+	completionDismissed string
 	details             string
 	status              string
 	statusError         bool
@@ -60,6 +71,10 @@ type Model struct {
 }
 
 func New(ctx context.Context, b *matrix.Backend, db *store.Store, demo bool) Model {
+	return NewWithSettings(ctx, b, db, demo, config.DefaultSettings())
+}
+
+func NewWithSettings(ctx context.Context, b *matrix.Backend, db *store.Store, demo bool, settings config.Settings) Model {
 	if b != nil {
 		ctx = b.Context()
 	}
@@ -74,7 +89,11 @@ func New(ctx context.Context, b *matrix.Backend, db *store.Store, demo bool) Mod
 	prompt := textinput.New()
 	prompt.Prompt = "  › "
 	prompt.SetVirtualCursor(true)
-	m := Model{focused: true, lastRead: map[string]string{}, backend: b, db: db, demo: demo, input: input, prompt: prompt, width: 100, height: 30, limit: 150, names: map[string]string{}, drafts: map[string]string{}, spans: map[string][2]int{}, current: db.Get("selected_room"), ctx: ctx, connection: "Connecting…", status: "Ctrl+K rooms · Alt+↑/↓ switch · PgUp history · /help"}
+	m := Model{settings: settings, focused: true, lastRead: map[string]string{}, backend: b, db: db, demo: demo, input: input, prompt: prompt, width: 100, height: 30, limit: settings.HistoryLimit, names: map[string]string{}, drafts: map[string]string{}, spans: map[string][2]int{}, current: db.Get("selected_room"), ctx: ctx, connection: "Connecting…", status: "Ctrl+K rooms · Alt+↑/↓ switch · PgUp history · /help"}
+	if settings.KeyboardMode == "vi" {
+		m.input.Blur()
+		m.status = "i compose · j/k chats or draft lines · Ctrl+↑/↓ messages · / search"
+	}
 	if demo {
 		m.connection = "Offline demo"
 	}
@@ -232,13 +251,13 @@ func (m Model) room() store.Room {
 	return store.Room{ID: m.current}
 }
 func (m Model) sidebarWidth() int {
-	if m.width < 76 {
+	if !m.settings.ShowSidebar || m.width < 76 {
 		return 0
 	}
 	return min(29, max(23, m.width/4))
 }
 func (m Model) mainWidth() int      { return max(16, m.width-m.sidebarWidth()) }
-func (m Model) timelineHeight() int { return max(1, m.height-11) }
+func (m Model) timelineHeight() int { return max(1, m.height-11-m.completionHeight()) }
 func (m *Model) clampScroll() {
 	m.scroll = min(max(0, m.scroll), max(0, len(m.rendered)-m.timelineHeight()))
 }
@@ -247,6 +266,10 @@ func (m *Model) switchRoom(room string) {
 		return
 	}
 	m.drafts[m.current] = m.input.Value()
+	m.viUndo = nil
+	m.viRedo = nil
+	m.viPending = ""
+	m.viCount = 0
 	m.current = room
 	_ = m.db.Put("selected_room", room)
 	m.selected = ""
@@ -254,7 +277,7 @@ func (m *Model) switchRoom(room string) {
 	m.thread = ""
 	m.edit = ""
 	m.scroll = 0
-	m.limit = 150
+	m.limit = m.settings.HistoryLimit
 	m.input.SetValue(m.drafts[room])
 	m.reload()
 }
@@ -319,7 +342,9 @@ func (m *Model) closePrompt() {
 	m.mode = ""
 	m.prompt.Reset()
 	m.prompt.Blur()
-	m.input.Focus()
+	if m.settings.KeyboardMode != "vi" || m.viInsert || m.input.Value() != "" {
+		m.input.Focus()
+	}
 	m.details = ""
 	m.search = nil
 }
@@ -337,7 +362,7 @@ func (m *Model) history() tea.Cmd {
 	if m.historyBusy || m.current == "" {
 		return nil
 	}
-	m.limit += 50
+	m.limit = min(10000, m.limit+m.settings.HistoryPageSize)
 	m.reload()
 	if m.demo {
 		return nil
@@ -429,6 +454,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode != "" {
 			return m.updateModal(v)
 		}
+
+		if m.settings.KeyboardMode == "vi" {
+			if key == "esc" && m.viInsert {
+				m.viInsert = false
+				m.viPending = ""
+				m.viCount = 0
+				if m.input.Value() == "" {
+					m.input.Blur()
+				} else {
+					m.input.Focus()
+					m.viMove("h", 1)
+				}
+				return m, nil
+			}
+			if !m.viInsert {
+				if cmd, handled := m.updateVi(key); handled {
+					return m, cmd
+				}
+				if len(v.Text) > 0 || key == "enter" || key == "tab" {
+					return m, nil
+				}
+			}
+		}
+		if matches := m.commandMatches(); len(matches) > 0 {
+			switch key {
+			case "up", "down":
+				delta := 1
+				if key == "up" {
+					delta = -1
+				}
+				m.completionIndex = (m.completionIndex + delta + len(matches)) % len(matches)
+				return m, nil
+			case "tab", "enter":
+				m.input.SetValue("/" + matches[m.completionIndex%len(matches)] + " ")
+				m.input.CursorEnd()
+				m.completionIndex = 0
+				return m, nil
+			case "esc":
+				m.completionDismissed = m.input.Value()
+				return m, nil
+			}
+		}
 		switch key {
 		case "ctrl+q":
 			return m, tea.Quit
@@ -510,7 +577,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if !m.demo && m.current != "" && time.Since(m.lastTyping) > 5*time.Second && len(v.Text) > 0 {
+		if m.settings.TypingNotifications && !m.demo && m.current != "" && time.Since(m.lastTyping) > 5*time.Second && len(v.Text) > 0 {
 			m.lastTyping = time.Now()
 			room := m.current
 			go func() {
@@ -522,9 +589,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		switch v.String() {
 		case "wheelup":
-			m.scroll += 3
+			m.scroll += m.settings.MouseScrollLines
 		case "wheeldown":
-			m.scroll -= 3
+			m.scroll -= m.settings.MouseScrollLines
 		}
 		m.clampScroll()
 		return m, nil
@@ -536,7 +603,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	}
+	if m.settings.KeyboardMode == "vi" && !m.viInsert {
+		return m, nil
+	}
+	before := m.input.Value()
 	m.input, cmd = m.input.Update(msg)
+	if m.input.Value() != before {
+		m.completionIndex = 0
+		m.completionDismissed = ""
+	}
 	return m, cmd
 }
 func (m Model) updateModal(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -695,7 +770,7 @@ type readResultMsg struct {
 }
 
 func (m *Model) autoRead() tea.Cmd {
-	if m.demo || !m.focused || m.mode != "" || m.scroll > 0 || m.current == "" || m.room().Membership != "join" {
+	if !m.settings.ReadReceipts || m.demo || !m.focused || m.mode != "" || m.scroll > 0 || m.current == "" || m.room().Membership != "join" {
 		return nil
 	}
 	target := ""

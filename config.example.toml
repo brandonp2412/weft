@@ -1,0 +1,9 @@
+# Copy to ~/.config/weft/config.toml (or $XDG_CONFIG_HOME/weft/config.toml).
+# Every setting is optional; these are the defaults.
+keyboard_mode = "normal" # "normal" or "vi"
+show_sidebar = true
+history_limit = 150 # Initial cached messages per room (1–10000).
+history_page_size = 50 # Additional cached messages per history request (1–10000).
+mouse_scroll_lines = 3 # Lines per mouse wheel event (1–100).
+typing_notifications = true # Send typing indicators.
+read_receipts = true # Automatically mark visible conversations read.

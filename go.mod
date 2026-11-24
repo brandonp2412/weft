@@ -8,6 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.1.1
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/mattn/go-sqlite3 v1.14.53
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/rs/zerolog v1.35.1
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.48.0

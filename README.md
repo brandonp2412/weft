@@ -75,7 +75,59 @@ After signing in, verify the new device:
 
 Weft automatically uploads new encryption sessions to an existing trusted server backup. It never silently replaces an encryption identity or backup. Messages awaiting keys are retried periodically; `/retry` also retries decryption and queued sends.
 
-Messages and uploaded files are encrypted in encrypted rooms. Reactions and room metadata follow Matrix's protocol behavior and are not encrypted by this client. The `◇` indicator marks encrypted rooms/messages; it does not assert that every participant's device has been verified. Cryptography and device-trust decisions are delegated to mautrix-go; weft has not undergone an independent security audit.
+Messages and uploaded files are encrypted in encrypted rooms. Reactions and room metadata follow Matrix's protocol behavior and are not encrypted by this client. Cryptography and device-trust decisions are delegated to mautrix-go; weft has not undergone an independent security audit.
+
+## Configuration
+
+Preferences are read from `$XDG_CONFIG_HOME/weft/config.toml`, or
+`~/.config/weft/config.toml` when `XDG_CONFIG_HOME` is unset. Use
+`weft --config /path/to/config.toml` to choose another file, including for
+`--demo`. Restart weft after editing it. A missing file uses the defaults;
+invalid values and unknown keys produce an error at startup.
+
+Copy [config.example.toml](config.example.toml) to get started. It includes
+keyboard mode, sidebar visibility, initial history size, history page size,
+mouse scroll speed, typing notifications, and automatic read receipts.
+`read_receipts = false` disables automatic marking; `/read` still works.
+Preferences are separate from session credentials and the data directory.
+
+`keyboard_mode = "normal"` preserves the bindings below. With
+`keyboard_mode = "vi"`, weft starts in navigation mode:
+
+| Key | Action in vi navigation mode |
+| --- | --- |
+| `i` or Enter / `a` | Insert before / after the cursor |
+| `ZZ` | Quit from vi normal mode |
+| `I` / `A` | Insert at first nonblank / end of line |
+| `o` / `O` | Open a line below / above |
+| Escape | Return from composing to normal mode |
+| `j` / `k` | Focus next / previous chat when the draft is empty; move down / up within a draft otherwise |
+| `h` / `l` | Move left / right within a draft |
+| `w` / `b` / `e` | Next word / previous word / end of word |
+| `0` / `^` / `$` | Start / first nonblank / end of line |
+| `gg` / `G` | First / last chat with an empty draft; beginning / end of a draft otherwise |
+| `d` / `c` / `y` + motion | Delete / change / yank text covered by a motion |
+| `dd` / `cc` / `yy` | Delete / change / yank a line |
+| `D` / `C` | Delete / change to end of line |
+| `x` | Delete a character |
+| `p` / `P` | Paste the internal register after / before the cursor or line |
+| `u` / Ctrl+R | Undo / redo draft edits |
+| `:` | Start a slash command when the draft is empty |
+| `/` | Search messages |
+
+Prefix motions and operators with a count, such as `3j`, `2w`, or `2dd`.
+The status bar shows `VI NORMAL` or `VI INSERT`. Chat selection changes
+immediately as you navigate. Draft motions preserve the chat selection;
+`j`/`k` also follow wrapped display lines. Ctrl+K opens the room picker,
+Ctrl+P/N switch chats even with a draft, and Ctrl+↑/↓ select messages.
+Page Up/Down scroll history.
+
+In insert mode, typing and sending work as usual. Escape returns to normal
+mode before a second Escape cancels a reply or edit. `:` preserves a nonempty
+draft; use insert mode to type a slash command. Undo history is cleared when
+switching chats. Room and search prompts retain ordinary text entry and arrow
+navigation. This mode provides the bindings above; visual selection, macros,
+and Vim Ex commands are not implemented.
 
 ## Keyboard
 

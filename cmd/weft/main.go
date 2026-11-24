@@ -32,6 +32,7 @@ func main() {
 func run() error {
 	flags := flag.NewFlagSet("weft", flag.ContinueOnError)
 	dir := flags.String("data-dir", config.Dir(), "session and database directory (or WEFT_HOME)")
+	settingsPath := flags.String("config", config.SettingsPath(), "TOML preferences file")
 	demo := flags.Bool("demo", false, "explore the interface offline with sample conversations")
 	showVersion := flags.Bool("version", false, "print version")
 	flags.Usage = func() {
@@ -80,6 +81,10 @@ Press F1 or type /help inside the client for commands.
 			return fmt.Errorf("unknown command %q (see weft --help)", args[0])
 		}
 	}
+	settings, err := config.LoadSettings(*settingsPath)
+	if err != nil {
+		return err
+	}
 	if *demo {
 		temp, e := os.MkdirTemp("", "weft-demo-*")
 		if e != nil {
@@ -94,7 +99,7 @@ Press F1 or type /help inside the client for commands.
 		if e = tui.SeedDemo(db); e != nil {
 			return e
 		}
-		_, e = tea.NewProgram(tui.New(ctx, nil, db, true), tea.WithContext(ctx)).Run()
+		_, e = tea.NewProgram(tui.NewWithSettings(ctx, nil, db, true, settings), tea.WithContext(ctx)).Run()
 		if errors.Is(e, tea.ErrProgramKilled) && ctx.Err() != nil {
 			return nil
 		}
@@ -122,7 +127,7 @@ Press F1 or type /help inside the client for commands.
 	}
 	defer backend.Close()
 	backend.Start()
-	_, e = tea.NewProgram(tui.New(ctx, backend, backend.Store, false), tea.WithContext(ctx)).Run()
+	_, e = tea.NewProgram(tui.NewWithSettings(ctx, backend, backend.Store, false, settings), tea.WithContext(ctx)).Run()
 	if errors.Is(e, tea.ErrProgramKilled) && ctx.Err() != nil {
 		return nil
 	}
