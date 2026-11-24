@@ -11,17 +11,20 @@ import (
 
 // Settings contains user preferences, separate from account credentials.
 type Settings struct {
-	KeyboardMode        string `toml:"keyboard_mode"`
-	ShowSidebar         bool   `toml:"show_sidebar"`
-	HistoryLimit        int    `toml:"history_limit"`
-	HistoryPageSize     int    `toml:"history_page_size"`
-	MouseScrollLines    int    `toml:"mouse_scroll_lines"`
-	TypingNotifications bool   `toml:"typing_notifications"`
-	ReadReceipts        bool   `toml:"read_receipts"`
+	TimeFormat           string `toml:"time_format"`
+	DesktopNotifications bool   `toml:"desktop_notifications"`
+	NotificationPreviews bool   `toml:"notification_previews"`
+	KeyboardMode         string `toml:"keyboard_mode"`
+	ShowSidebar          bool   `toml:"show_sidebar"`
+	HistoryLimit         int    `toml:"history_limit"`
+	HistoryPageSize      int    `toml:"history_page_size"`
+	MouseScrollLines     int    `toml:"mouse_scroll_lines"`
+	TypingNotifications  bool   `toml:"typing_notifications"`
+	ReadReceipts         bool   `toml:"read_receipts"`
 }
 
 func DefaultSettings() Settings {
-	return Settings{KeyboardMode: "normal", ShowSidebar: true, HistoryLimit: 150, HistoryPageSize: 50, MouseScrollLines: 3, TypingNotifications: true, ReadReceipts: true}
+	return Settings{TimeFormat: "24h", DesktopNotifications: true, KeyboardMode: "normal", ShowSidebar: true, HistoryLimit: 150, HistoryPageSize: 50, MouseScrollLines: 3, TypingNotifications: true, ReadReceipts: true}
 }
 
 func SettingsPath() string {
@@ -53,6 +56,9 @@ func LoadSettings(path string) (Settings, error) {
 }
 
 func (s Settings) Validate() error {
+	if s.TimeFormat != "12h" && s.TimeFormat != "24h" {
+		return fmt.Errorf("time_format must be 12h or 24h")
+	}
 	if s.KeyboardMode != "normal" && s.KeyboardMode != "vi" {
 		return fmt.Errorf("keyboard_mode must be normal or vi")
 	}

@@ -17,6 +17,8 @@ func TestSettings(t *testing.T) {
 		valid      bool
 	}{
 		{"partial", "keyboard_mode = 'vi'\nread_receipts = false", true},
+		{"12 hour", "keyboard_mode = 'vi'\nread_receipts = false\ntime_format = '12h'", true},
+		{"invalid time format", "time_format = '12'", false},
 		{"unknown mode", "keyboard_mode = 'vim'", false},
 		{"unknown key", "typo = true", false},
 		{"bad type", "show_sidebar = 'yes'", false},

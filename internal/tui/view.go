@@ -29,12 +29,19 @@ func fit(s string, width int) string {
 	s = clip(s, width)
 	return s + strings.Repeat(" ", max(0, width-ansi.StringWidth(s)))
 }
+func (m Model) timeLayout() string {
+	if m.settings.TimeFormat == "12h" {
+		return "3:04 PM"
+	}
+	return "15:04"
+}
+
 func (m *Model) renderTimeline() {
 	m.rendered = nil
 	m.spans = map[string][2]int{}
 	width := max(10, m.mainWidth()-6)
 	date := ""
-	for i, msg := range m.messages {
+	for _, msg := range m.messages {
 		start := len(m.rendered)
 		t := time.UnixMilli(msg.TS)
 		day := t.Format("Monday, 2 January 2006")
@@ -60,7 +67,7 @@ func (m *Model) renderTimeline() {
 		if msg.ID == m.selected {
 			prefix = "▎ "
 		}
-		heading := fmt.Sprintf("%s%s  %s  #%d%s", prefix, name, t.Format("15:04"), i+1, badge)
+		heading := fmt.Sprintf("%s%s  %s%s", prefix, name, t.Format(m.timeLayout()), badge)
 		style := accentStyle
 		if msg.Sender == m.userID() {
 			style = lipgloss.NewStyle().Foreground(gold)
@@ -85,7 +92,7 @@ func (m *Model) renderTimeline() {
 		}
 		switch msg.Kind {
 		case "m.image", "m.file", "m.audio", "m.video", "m.sticker":
-			text = "↧ " + text + "  [attachment · /download #" + fmt.Sprint(i+1) + " path]"
+			text = "↧ " + text + "  [attachment · /download selected path]"
 		}
 		if msg.Redacted {
 			text = "[message deleted]"
@@ -108,15 +115,7 @@ func (m Model) sidebar() string {
 	}
 	var rows []string
 	rows = append(rows, accentStyle.Bold(true).Render("  weft"), dimStyle.Render(clip("  MATRIX IN THE TERMINAL", w-2)), "", dimStyle.Render("  ROOMS"))
-	selected := 0
-	for i, r := range m.rooms {
-		if r.ID == m.current {
-			selected = i
-		}
-	}
-	available := max(1, m.height-8)
-	start := max(0, selected-available+1)
-	end := min(len(m.rooms), start+available)
+	start, end := m.sidebarRoomRange()
 	for _, r := range m.rooms[start:end] {
 		icon := " "
 		if r.Membership == "invite" {
@@ -289,7 +288,7 @@ func (m Model) modalView() string {
 			if i == index {
 				prefix = "› "
 			}
-			lines = append(lines, accentStyle.Render(clip(prefix+oneLine(msg.Sender)+" · "+time.UnixMilli(msg.TS).Format("Jan 2 15:04"), width-6)), clip("  "+oneLine(msg.Body), width-6))
+			lines = append(lines, accentStyle.Render(clip(prefix+oneLine(msg.Sender)+" · "+time.UnixMilli(msg.TS).Format("Jan 2 "+m.timeLayout()), width-6)), clip("  "+oneLine(msg.Body), width-6))
 		}
 		if len(m.search) == 0 {
 			lines = []string{"No matches in cached history. Load older messages with PgUp."}
@@ -344,13 +343,15 @@ Alt+↑/↓ or Ctrl+P/N switch rooms · Ctrl+↑/↓ select message
 PgUp/PgDown scroll · Ctrl+End latest · Ctrl+C quit
 Esc cancel reply/edit or return from a thread
 
-Messages: use #number shown above a message, or $eventID
-/reply #3 [text]    /edit #3 [text]    /me action
-/thread #3 [text]   /back             /react #3 emoji
-/redact #3 [reason]                  /read
-/upload /path/to/file                /download #3 /save/path
+Messages: Ctrl+↑/↓ to select, then use selected or $eventID
+/reply selected [text]    /edit selected [text]    /me action
+/thread selected [text]   /back             /react selected emoji
+/redact selected [reason]                  /read
+/upload /path/to/file                /download selected /save/path
+/image /path/to/image or mxc://server/media [caption]
+/embed selected [caption]           Reuse an existing image
 /search [query]    /history          /retry
-/discard #3 (cancel a queued send)    //text sends /text
+/discard selected (cancel a queued send)    //text sends /text
 
 Rooms
 /join #alias:server or !roomID        /leave confirm

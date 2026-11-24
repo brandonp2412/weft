@@ -37,7 +37,7 @@ The Makefile uses `-tags goolm` to select mautrix's Go Olm implementation. Use t
 ```sh
 go build -tags goolm -o bin/weft ./cmd/weft
 go run -tags goolm ./cmd/weft --demo
-make install                 # installs to ~/.local/bin/weft
+make install                 # links ~/.local/bin/weft to this checkout's bin/weft
 ```
 
 SQLite uses CGO. You do not need a Rust compiler.
@@ -90,8 +90,9 @@ Weft reads preferences from `$XDG_CONFIG_HOME/weft/config.toml`, or
 Invalid values and unknown keys cause an error at startup.
 
 Copy [config.example.toml](config.example.toml) to get started. You can set the
-keyboard mode, sidebar visibility, initial history size, history page size,
-mouse scroll speed, typing notifications, and automatic read receipts.
+keyboard mode, time format, sidebar visibility, initial history size, history page size,
+mouse scroll speed, typing notifications, desktop notifications, and automatic read receipts.
+`time_format = "24h"` is the default; use `"12h"` for times with AM/PM.
 `read_receipts = false` disables automatic marking; `/read` still works.
 Preferences are separate from session credentials and the data directory.
 
@@ -132,6 +133,24 @@ draft; use insert mode to type a slash command. Undo history is cleared when
 switching chats. Room and search prompts retain ordinary text entry and arrow
 navigation. Visual selection, macros, and Vim Ex commands are not implemented.
 
+## Desktop notifications
+
+On Linux, weft sends desktop alerts through `notify-send` while it is running.
+Install your distribution's libnotify tools and run a desktop notification daemon.
+Alerts are enabled by default; set `desktop_notifications = false` to disable them.
+Restart weft after changing preferences.
+
+Alerts show the room name and “New message”. Set `notification_previews = true`
+to include the sender and message text, which may appear on your lock screen.
+Messages still waiting for encryption keys use the generic preview.
+
+Weft skips the first sync after launch, cached messages, history requests, edits,
+and your own messages. It also suppresses alerts for the focused conversation
+when you are at the bottom of its timeline. Other rooms and messages arriving
+while the terminal is unfocused or scrolled up produce alerts. Focus detection
+requires a terminal that supports focus reporting. Alerts cover incoming messages;
+Matrix push rules and room mute settings are not applied yet.
+
 ## Keyboard
 
 | Key | Action |
@@ -154,7 +173,7 @@ With automatic read receipts enabled, weft marks a visible conversation read whe
 
 ## Commands
 
-To refer to a message, use the `#number` shown above it, `selected` for the selected message, or a full `$eventID`. Message numbers belong to the loaded timeline and can change when you load more history.
+To refer to a message, select it with Ctrl+↑/↓ and use `selected`, or use a full `$eventID`. Numeric references such as `#3` are also accepted; they belong to the loaded timeline and can change when you load more history.
 
 | Command | Action |
 | --- | --- |
@@ -166,6 +185,9 @@ To refer to a message, use the `#number` shown above it, `selected` for the sele
 | `/react #3 emoji` | Add a reaction |
 | `/redact #3 [reason]` | Delete a message, subject to room permissions |
 | `/upload /path/to/file` | Upload an attachment; paths may contain spaces |
+| `/image /path/to/image` | Upload an image (also supported by `/upload`) |
+| `/image mxc://server/media [caption]` | Embed an existing unencrypted Matrix image |
+| `/embed #3 [caption]` | Reuse an image message, including encrypted media |
 | `/download #3 /save/path` | Download and decrypt an attachment; existing files are never overwritten |
 | `/search [query]` | Search cached messages, then jump to a result |
 | `/history` | Load another page of room history |
@@ -190,6 +212,11 @@ To refer to a message, use the `#number` shown above it, `selected` for the sele
 | `/help`, `/quit` | Open help / quit |
 
 Start a normal message with `//` to send a leading `/`. In the verification dialog, `a` accepts a request, `y` confirms matching symbols, and `n` rejects it. Escape only hides the dialog; `/cancel` cancels the verification.
+
+Drag an image or file from your file manager into the terminal, then press Enter
+to upload it. This works with terminals that paste a local path or `file://` URL,
+including quoted paths and paths with escaped spaces. Drop into an empty composer;
+text already in the composer is preserved.
 
 Attachments are handled in memory and limited to 64 MiB. Your server may have a smaller limit.
 
@@ -242,4 +269,4 @@ See [the architecture notes](docs/architecture.md) for the package boundaries an
 
 ## Current scope
 
-Weft currently supports text chat. Calls, account registration, a spaces hierarchy, push and desktop notifications, terminal image previews, polls, and administration tools are not implemented.
+Weft currently supports text chat and image/file attachments. Calls, account registration, a spaces hierarchy, mobile push notifications, terminal image previews, polls, and administration tools are not implemented.

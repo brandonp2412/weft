@@ -19,6 +19,7 @@ check:
 integration:
 	./scripts/integration.sh
 install: build
-	install -Dm755 bin/weft $(DESTDIR)$(PREFIX)/bin/weft
+	install -d $(DESTDIR)$(PREFIX)/bin
+	ln -sfn $(CURDIR)/bin/weft $(DESTDIR)$(PREFIX)/bin/weft
 clean:
 	rm -rf bin

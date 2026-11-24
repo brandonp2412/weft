@@ -48,7 +48,7 @@ func (m Model) target(ref string) (string, error) {
 	}
 	n, e := strconv.Atoi(strings.TrimPrefix(ref, "#"))
 	if e != nil || n < 1 || n > len(m.messages) {
-		return "", errors.New("invalid message number; use the #number shown in the timeline")
+		return "", errors.New("invalid message number; select a message with Ctrl+↑ or use $eventID")
 	}
 	msg := m.messages[n-1]
 	if msg.Pending {
@@ -289,7 +289,7 @@ func (m *Model) command(line string) tea.Cmd {
 		}
 		m.reload()
 		return nil
-	case "reply", "thread", "edit", "react", "redact", "download":
+	case "reply", "thread", "edit", "react", "redact", "download", "embed":
 		ref, body := split(arg)
 		target, e := m.target(ref)
 		if e != nil {
@@ -344,13 +344,27 @@ func (m *Model) command(line string) tea.Cmd {
 			return m.run("Reaction sent", func(ctx context.Context) error { return m.backend.React(ctx, room, target, body) })
 		case "redact":
 			return m.run("Message deleted", func(ctx context.Context) error { return m.backend.Redact(ctx, room, target, body) })
+		case "embed":
+			return m.run("Image queued", func(ctx context.Context) error { return m.backend.Embed(room, target, body) })
 		case "download":
 			if body == "" {
 				return fail("Usage: /download #number /path/to/save")
 			}
 			return m.run("Saved attachment to "+body, func(ctx context.Context) error { return m.backend.Download(ctx, target, body) })
 		}
+	case "image":
+		if arg == "" {
+			return fail("Usage: /image /path/to/image or /image mxc://server/media [caption]")
+		}
+		if strings.HasPrefix(arg, "mxc://") {
+			source, caption := split(arg)
+			return m.run("Image queued", func(ctx context.Context) error { return m.backend.Image(room, source, caption) })
+		}
+		return m.run("Image queued", func(ctx context.Context) error { return m.backend.Upload(ctx, room, arg) })
 	case "upload":
+		if path, ok := droppedFile(arg); ok {
+			arg = path
+		}
 		if arg == "" {
 			return fail("Usage: /upload /path/to/file")
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -131,5 +132,25 @@ func TestLeavingRoomSelectsRemainingConversation(t *testing.T) {
 	restarted := New(context.Background(), nil, m.db, true)
 	if restarted.current != saved {
 		t.Fatal("selected conversation not restored")
+	}
+}
+
+func TestMessageTimeFormat(t *testing.T) {
+	m := demoModel(t)
+	for _, tc := range []struct{ format, want string }{
+		{"24h", "00:05"}, {"12h", "12:05 AM"},
+	} {
+		m.settings.TimeFormat = tc.format
+		m.messages = []store.Message{{ID: "$clock", Sender: "@clock:test", Body: "hello", TS: time.Date(2026, 11, 24, 0, 5, 0, 0, time.Local).UnixMilli()}}
+		m.renderTimeline()
+		timeline := ansi.Strip(strings.Join(m.rendered, "\n"))
+		if !strings.Contains(timeline, "@clock:test  "+tc.want) || strings.Contains(timeline, "#1") {
+			t.Fatalf("%s timeline: %s", tc.format, timeline)
+		}
+		m.mode = "search-results"
+		m.search = m.messages
+		if view := ansi.Strip(m.modalView()); !strings.Contains(view, "Nov 24 "+tc.want) {
+			t.Fatalf("%s search: %s", tc.format, view)
+		}
 	}
 }

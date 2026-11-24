@@ -41,6 +41,7 @@ type Backend struct {
 	Store         *store.Store
 	Crypto        *cryptohelper.CryptoHelper
 	Verify        *verificationhelper.VerificationHelper
+	Notifications chan store.Message
 	Updates       chan struct{}
 	Notices       chan Notice
 	Verifications chan Verification
@@ -77,7 +78,7 @@ func Open(ctx context.Context, dir string, c *config.Config) (*Backend, error) {
 	cli.Log = zerolog.New(logFile).Level(zerolog.WarnLevel).With().Timestamp().Logger()
 	cli.UserAgent = "weft/0.1.0"
 	runCtx, cancel := context.WithCancel(ctx)
-	b := &Backend{keyRequests: map[string]time.Time{}, tasks: make(chan func(context.Context), 32), Client: cli, Store: s, Updates: make(chan struct{}, 1), Notices: make(chan Notice, 64), Verifications: make(chan Verification, 16), ctx: runCtx, cancel: cancel, wake: make(chan struct{}, 1), synced: make(chan struct{}), typing: make(map[string][]string), logFile: logFile}
+	b := &Backend{keyRequests: map[string]time.Time{}, tasks: make(chan func(context.Context), 32), Client: cli, Store: s, Notifications: make(chan store.Message, 64), Updates: make(chan struct{}, 1), Notices: make(chan Notice, 64), Verifications: make(chan Verification, 16), ctx: runCtx, cancel: cancel, wake: make(chan struct{}, 1), synced: make(chan struct{}), typing: make(map[string][]string), logFile: logFile}
 	cleanup := func(err error) (*Backend, error) { cancel(); s.Close(); logFile.Close(); return nil, err }
 	ds := cli.Syncer.(*mautrix.DefaultSyncer)
 	// Raw encrypted events are persisted before the helper tries decryption.
@@ -200,6 +201,20 @@ func (s *syncer) ProcessResponse(ctx context.Context, res *mautrix.RespSync, sin
 	for room := range res.Rooms.Leave {
 		b.record(b.Store.RoomField(room.String(), "membership", "leave"))
 	}
+	// Only later syncs produce alerts. Ignore cached events and initial history.
+	var incoming []*event.Event
+	select {
+	case <-b.synced:
+		for _, room := range res.Rooms.Join {
+			for _, evt := range room.Timeline.Events {
+				_ = evt.Content.ParseRaw(evt.Type)
+				if b.notificationCandidate(evt) {
+					incoming = append(incoming, evt)
+				}
+			}
+		}
+	default:
+	}
 	if e := s.DefaultSyncer.ProcessResponse(ctx, res, since); e != nil {
 		return e
 	}
@@ -236,6 +251,14 @@ func (s *syncer) ProcessResponse(ctx context.Context, res *mautrix.RespSync, sin
 	}
 	if e = b.Store.Put("next_batch", res.NextBatch); e != nil {
 		return e
+	}
+	for _, evt := range incoming {
+		if msg, err := b.Store.Message(evt.ID.String()); err == nil && !msg.Redacted {
+			select {
+			case b.Notifications <- msg:
+			default:
+			}
+		}
 	}
 	b.syncOnce.Do(func() { close(b.synced) })
 	b.notice("Connected", false)
@@ -562,3 +585,18 @@ func (b *Backend) maintenanceLoop() {
 
 // Context is cancelled before stores are closed so in-flight UI work can stop.
 func (b *Backend) Context() context.Context { return b.ctx }
+
+// notificationCandidate is called before saving a sync timeline event.
+func (b *Backend) notificationCandidate(evt *event.Event) bool {
+	if evt.Sender == b.Client.UserID || evt.StateKey != nil || evt.Unsigned.RedactedBecause != nil {
+		return false
+	}
+	if evt.Type != event.EventMessage && evt.Type != event.EventEncrypted && evt.Type != event.EventSticker {
+		return false
+	}
+	if evt.Type == event.EventMessage && evt.Content.AsMessage().RelatesTo != nil && evt.Content.AsMessage().RelatesTo.Type == event.RelReplace {
+		return false
+	}
+	exists, err := b.Store.HasEvent(evt.ID.String())
+	return err == nil && !exists
+}

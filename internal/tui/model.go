@@ -104,7 +104,7 @@ func (m Model) Init() tea.Cmd {
 	if m.demo {
 		return textarea.Blink
 	}
-	return tea.Batch(textarea.Blink, m.waitUpdates(), m.waitNotices(), m.waitVerification())
+	return tea.Batch(textarea.Blink, m.waitUpdates(), m.waitNotices(), m.waitVerification(), m.waitNotifications())
 }
 func (m Model) waitUpdates() tea.Cmd {
 	return func() tea.Msg {
@@ -256,7 +256,18 @@ func (m Model) sidebarWidth() int {
 	}
 	return min(29, max(23, m.width/4))
 }
-func (m Model) mainWidth() int      { return max(16, m.width-m.sidebarWidth()) }
+func (m Model) mainWidth() int { return max(16, m.width-m.sidebarWidth()) }
+func (m Model) sidebarRoomRange() (int, int) {
+	selected := 0
+	for i, r := range m.rooms {
+		if r.ID == m.current {
+			selected = i
+		}
+	}
+	available := max(1, m.height-8)
+	start := max(0, selected-available+1)
+	return start, min(len(m.rooms), start+available)
+}
 func (m Model) timelineHeight() int { return max(1, m.height-11-m.completionHeight()) }
 func (m *Model) clampScroll() {
 	m.scroll = min(max(0, m.scroll), max(0, len(m.rendered)-m.timelineHeight()))
@@ -391,6 +402,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderTimeline()
 		m.clampScroll()
 		return m, nil
+	case notificationMsg:
+		return m, tea.Batch(m.waitNotifications(), m.desktopNotification(store.Message(v)))
 	case refreshMsg:
 		m.reload()
 		return m, tea.Batch(m.waitUpdates(), m.autoRead())
@@ -446,6 +459,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.reload()
 		return m, nil
+	case tea.PasteMsg:
+		if m.mode == "" && m.input.Value() == "" {
+			if path, ok := droppedFile(v.Content); ok {
+				m.input.SetValue("/upload " + path)
+				m.status = "Attachment ready — press Enter to upload"
+				m.statusError = false
+				if m.settings.KeyboardMode == "vi" {
+					m.viInsert = true
+				}
+				return m, nil
+			}
+		}
 	case tea.KeyPressMsg:
 		key := v.String()
 		if key == "ctrl+c" {
@@ -554,6 +579,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if line == "" {
 				return m, nil
 			}
+			// Some terminals deliver drops as ordinary key events instead of
+			// bracketed paste. Recognize their paths when the user presses Enter.
+			if path, ok := droppedFile(line); ok && m.edit == "" {
+				if !m.busy {
+					m.input.Reset()
+				}
+				room := m.current
+				return m, m.run("Attachment queued", func(ctx context.Context) error { return m.backend.Upload(ctx, room, path) })
+			}
 			m.input.Reset()
 			if strings.HasPrefix(line, "/") && !strings.HasPrefix(line, "//") {
 				cmd := m.command(line)
@@ -586,6 +620,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_, _ = m.backend.Client.UserTyping(ctx, idRoom(room), true, 7*time.Second)
 			}()
 		}
+	case tea.MouseClickMsg:
+		if v.Button != tea.MouseLeft || m.mode != "" || m.height < 14 || m.sidebarWidth() == 0 || v.X < 0 || v.X >= m.sidebarWidth()-1 || v.Y < 4 {
+			return m, nil
+		}
+		start, end := m.sidebarRoomRange()
+		index := start + v.Y - 4
+		if index < end {
+			m.switchRoom(m.rooms[index].ID)
+			return m, m.autoRead()
+		}
+		return m, nil
 	case tea.MouseWheelMsg:
 		switch v.String() {
 		case "wheelup":

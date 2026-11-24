@@ -1,10 +1,15 @@
 package matrix
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime"
 	"net/http"
@@ -114,6 +119,10 @@ func (b *Backend) Upload(ctx context.Context, room, path string) error {
 	c := event.MessageEventContent{MsgType: event.MsgFile, Body: name, FileName: name, Info: &event.FileInfo{MimeType: mimeType, Size: len(data)}}
 	if strings.HasPrefix(mimeType, "image/") {
 		c.MsgType = event.MsgImage
+		if dimensions, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+			c.Info.Width = dimensions.Width
+			c.Info.Height = dimensions.Height
+		}
 	}
 	if strings.HasPrefix(mimeType, "audio/") {
 		c.MsgType = event.MsgAudio
@@ -141,6 +150,46 @@ func (b *Backend) Upload(ctx context.Context, room, path string) error {
 	}
 	return b.Queue(room, c)
 }
+
+// Image embeds existing Matrix media without downloading or uploading it again.
+func (b *Backend) Image(room, source, caption string) error {
+	uri, err := id.ContentURIString(source).Parse()
+	if err != nil || uri.Homeserver == "" || uri.FileID == "" {
+		return errors.New("image source must be a Matrix mxc:// URL; use /upload for local files")
+	}
+	if caption == "" {
+		caption = "Image"
+	}
+	return b.Queue(room, event.MessageEventContent{MsgType: event.MsgImage, Body: caption, URL: uri.CUString()})
+}
+
+// Embed reuses image content, including the keys needed to decrypt encrypted media.
+func (b *Backend) Embed(room, target, caption string) error {
+	m, err := b.Store.Message(target)
+	if err != nil {
+		return err
+	}
+	if m.Redacted {
+		return errors.New("message was deleted")
+	}
+	var evt event.Event
+	if err = json.Unmarshal(m.Raw, &evt); err != nil {
+		return err
+	}
+	if err = evt.Content.ParseRaw(evt.Type); err != nil {
+		return err
+	}
+	original := evt.Content.AsMessage()
+	if original.MsgType != event.MsgImage || (original.URL == "" && (original.File == nil || original.File.URL == "")) {
+		return errors.New("message has no image to embed")
+	}
+	c := event.MessageEventContent{MsgType: event.MsgImage, Body: original.Body, FileName: original.FileName, URL: original.URL, File: original.File, Info: original.Info}
+	if caption != "" {
+		c.Body = caption
+	}
+	return b.Queue(room, c)
+}
+
 func (b *Backend) Download(ctx context.Context, target, path string) error {
 	m, e := b.Store.Message(target)
 	if e != nil {
