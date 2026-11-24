@@ -8,6 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"maunium.net/go/mautrix"
+	"weft/internal/matrix"
 	"weft/internal/store"
 )
 
@@ -23,6 +25,17 @@ func demoModel(t *testing.T) Model {
 	}
 	return New(context.Background(), nil, db, true)
 }
+func TestOpeningThreadSchedulesReadReceipt(t *testing.T) {
+	m := demoModel(t)
+	m.demo = false
+	m.backend = &matrix.Backend{Client: &mautrix.Client{UserID: "@you:weft.local"}}
+	m.switchRoom("!studio:weft.local")
+
+	if cmd := m.command("/thread $demo-1"); cmd == nil || m.lastRead[m.current] != "$demo-1" {
+		t.Fatal("opening a thread should schedule a read receipt for its latest event")
+	}
+}
+
 func TestLayoutFitsTerminal(t *testing.T) {
 	for _, size := range [][2]int{{36, 14}, {60, 20}, {80, 24}, {120, 40}, {180, 50}} {
 		for _, mode := range []string{"", "help", "rooms", "details", "recover", "search-results"} {
@@ -152,5 +165,60 @@ func TestMessageTimeFormat(t *testing.T) {
 		if view := ansi.Strip(m.modalView()); !strings.Contains(view, "Nov 24 "+tc.want) {
 			t.Fatalf("%s search: %s", tc.format, view)
 		}
+	}
+}
+
+func TestRoomPickerStaysStationaryWhileTyping(t *testing.T) {
+	for _, size := range [][2]int{{60, 20}, {120, 40}} {
+		m := demoModel(t)
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		m = updated.(Model)
+		m.openPrompt("rooms")
+		row := func() int {
+			for i, line := range strings.Split(ansi.Strip(m.View().Content), "\n") {
+				if strings.Contains(line, "Switch conversation") {
+					return i
+				}
+			}
+			t.Fatal("missing picker title")
+			return -1
+		}
+		initial := row()
+		for _, query := range []string{m.rooms[0].Title(), "no matching conversation", strings.Repeat("long query ", 30), ""} {
+			m.prompt.SetValue(query)
+			m.prompt.CursorEnd()
+			if got := row(); got != initial {
+				t.Fatalf("%v query %q: picker moved from row %d to %d", size, query, initial, got)
+			}
+			for _, line := range strings.Split(m.View().Content, "\n") {
+				if ansi.StringWidth(line) > size[0] {
+					t.Fatal("long query overflowed terminal")
+				}
+			}
+		}
+	}
+}
+
+func TestRoomPickerSelectionTracksQueryChanges(t *testing.T) {
+	m := demoModel(t)
+	m.openPrompt("rooms")
+	press := func(code rune) {
+		updated, _ := m.Update(tea.KeyPressMsg{Code: code})
+		m = updated.(Model)
+	}
+	for range len(m.rooms) + 5 {
+		press(tea.KeyDown)
+	}
+	if m.promptIndex != len(m.rooms)-1 {
+		t.Fatal("selection moved beyond results")
+	}
+	press(tea.KeyLeft)
+	if m.promptIndex != len(m.rooms)-1 {
+		t.Fatal("cursor movement reset selection")
+	}
+	updated, _ := m.Update(tea.PasteMsg{Content: m.rooms[0].Title()})
+	m = updated.(Model)
+	if m.promptIndex != 0 {
+		t.Fatal("pasted query did not reset selection")
 	}
 }

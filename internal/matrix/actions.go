@@ -79,7 +79,7 @@ func (b *Backend) MarkRead(ctx context.Context, room, target string) error {
 	return e
 }
 
-const maxAttachment = 64 << 20
+const MaxAttachment = 64 << 20
 
 func (b *Backend) Upload(ctx context.Context, room, path string) error {
 	f, e := os.Open(path)
@@ -94,14 +94,21 @@ func (b *Backend) Upload(ctx context.Context, room, path string) error {
 	if !info.Mode().IsRegular() {
 		return errors.New("attachment must be a regular file")
 	}
-	if info.Size() > maxAttachment {
+	if info.Size() > MaxAttachment {
 		return errors.New("attachment exceeds 64 MiB")
 	}
-	data, e := io.ReadAll(io.LimitReader(f, maxAttachment+1))
+	data, e := io.ReadAll(io.LimitReader(f, MaxAttachment+1))
 	if e != nil {
 		return e
 	}
-	if len(data) > maxAttachment {
+	name := filepath.Base(path)
+	return b.UploadBytes(ctx, room, name, mime.TypeByExtension(filepath.Ext(name)), data)
+}
+
+// UploadBytes queues an in-memory attachment using the same upload path as files.
+// It takes ownership of data and may encrypt it in place.
+func (b *Backend) UploadBytes(ctx context.Context, room, name, mimeType string, data []byte) error {
+	if len(data) > MaxAttachment {
 		return errors.New("attachment exceeds 64 MiB")
 	}
 	r, e := b.Store.Room(room)
@@ -111,8 +118,6 @@ func (b *Backend) Upload(ctx context.Context, room, path string) error {
 	if r.Membership != "join" {
 		return errors.New("join the room before uploading")
 	}
-	name := filepath.Base(path)
-	mimeType := mime.TypeByExtension(filepath.Ext(name))
 	if mimeType == "" {
 		mimeType = http.DetectContentType(data)
 	}
@@ -190,52 +195,87 @@ func (b *Backend) Embed(room, target, caption string) error {
 	return b.Queue(room, c)
 }
 
-func (b *Backend) Download(ctx context.Context, target, path string) error {
-	m, e := b.Store.Message(target)
-	if e != nil {
-		return e
+// ImagePreview downloads the original image or its attached thumbnail within limit.
+func (b *Backend) ImagePreview(ctx context.Context, target string, limit int64, thumbnail bool) ([]byte, error) {
+	c, err := b.attachmentContent(target)
+	if err != nil {
+		return nil, err
+	}
+	if c.MsgType != event.MsgImage {
+		return nil, errors.New("message is not an image")
+	}
+	if !thumbnail {
+		if c.Info != nil && int64(c.Info.Size) > limit {
+			return nil, fmt.Errorf("attachment exceeds %d MiB", limit>>20)
+		}
+		return b.downloadMedia(ctx, c.URL, c.File, limit)
+	}
+	if c.Info == nil || (c.Info.ThumbnailFile == nil && (c.File != nil || c.Info.ThumbnailURL == "")) {
+		return nil, errors.New("image has no thumbnail")
+	}
+	return b.downloadMedia(ctx, c.Info.ThumbnailURL, c.Info.ThumbnailFile, limit)
+}
+
+func (b *Backend) attachmentContent(target string) (*event.MessageEventContent, error) {
+	m, err := b.Store.Message(target)
+	if err != nil {
+		return nil, err
 	}
 	if m.Redacted {
-		return errors.New("message was deleted")
+		return nil, errors.New("message was deleted")
 	}
 	var evt event.Event
-	if e = json.Unmarshal(m.Raw, &evt); e != nil {
-		return e
+	if err := json.Unmarshal(m.Raw, &evt); err != nil {
+		return nil, err
 	}
-	if e = evt.Content.ParseRaw(evt.Type); e != nil {
-		return e
+	if err := evt.Content.ParseRaw(evt.Type); err != nil {
+		return nil, err
 	}
-	c := evt.Content.AsMessage()
-	uri := c.URL
-	if c.File != nil {
-		uri = c.File.URL
+	return evt.Content.AsMessage(), nil
+}
+
+func (b *Backend) downloadMedia(ctx context.Context, uri id.ContentURIString, encrypted *event.EncryptedFileInfo, limit int64) ([]byte, error) {
+	if encrypted != nil {
+		uri = encrypted.URL
 	}
 	if uri == "" {
-		return errors.New("message has no attachment")
+		return nil, errors.New("message has no attachment")
 	}
 	parsed, e := uri.Parse()
 	if e != nil {
-		return e
+		return nil, e
 	}
 	resp, e := b.Client.Download(ctx, parsed)
 	if e != nil {
-		return e
+		return nil, e
 	}
 	defer resp.Body.Close()
-	if resp.ContentLength > maxAttachment {
-		return errors.New("download exceeds 64 MiB")
+	if resp.ContentLength > limit {
+		return nil, fmt.Errorf("attachment exceeds %d MiB", limit>>20)
 	}
-	data, e := io.ReadAll(io.LimitReader(resp.Body, maxAttachment+1))
+	data, e := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if e != nil {
+		return nil, e
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("attachment exceeds %d MiB", limit>>20)
+	}
+	if encrypted != nil {
+		if e = encrypted.DecryptInPlace(data); e != nil {
+			return nil, fmt.Errorf("attachment integrity check: %w", e)
+		}
+	}
+	return data, nil
+}
+
+func (b *Backend) Download(ctx context.Context, target, path string) error {
+	content, e := b.attachmentContent(target)
 	if e != nil {
 		return e
 	}
-	if len(data) > maxAttachment {
-		return errors.New("download exceeds 64 MiB")
-	}
-	if c.File != nil {
-		if e = c.File.DecryptInPlace(data); e != nil {
-			return fmt.Errorf("attachment integrity check: %w", e)
-		}
+	data, e := b.downloadMedia(ctx, content.URL, content.File, MaxAttachment)
+	if e != nil {
+		return e
 	}
 	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if e != nil {
@@ -248,4 +288,70 @@ func (b *Backend) Download(ctx context.Context, target, path string) error {
 		return e
 	}
 	return closeErr
+}
+
+// PinRoom updates the user's Matrix favourite tag, shared across clients.
+func (b *Backend) PinRoom(ctx context.Context, room string, pinned bool) error {
+	var err error
+	if pinned {
+		err = b.Client.AddTag(ctx, id.RoomID(room), event.RoomTagFavourite, 0.5)
+	} else {
+		err = b.Client.RemoveTag(ctx, id.RoomID(room), event.RoomTagFavourite)
+	}
+	if err != nil {
+		return err
+	}
+	if err = b.Store.PinRoom(room, pinned); err != nil {
+		return err
+	}
+	b.Changed()
+	return nil
+}
+
+// SyncRoomTags loads current room preferences without waiting for message history or
+// decryption. Its sync token must never replace the main timeline sync token.
+func (b *Backend) SyncRoomTags(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	const filter = `{"account_data":{"types":["m.push_rules"]},"presence":{"not_types":["*"]},"room":{"account_data":{"types":["m.tag"]},"state":{"not_types":["*"]},"timeline":{"not_types":["*"]},"ephemeral":{"not_types":["*"]}}}`
+	res, err := b.Client.FullSyncRequest(ctx, mautrix.ReqSync{FilterID: filter, SetPresence: event.PresenceOffline})
+	if err != nil {
+		return err
+	}
+	// Replace the cache atomically so favourites removed by another client while
+	// Weft was closed are cleared even when no m.tag event is returned.
+	tx, err := b.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, "DELETE FROM room_pins"); err != nil {
+		return err
+	}
+	for room, data := range res.Rooms.Join {
+		for _, evt := range data.AccountData.Events {
+			if evt.Type.Type != event.AccountDataRoomTags.Type {
+				continue
+			}
+			var content event.TagEventContent
+			if err = json.Unmarshal(evt.Content.VeryRaw, &content); err != nil {
+				return err
+			}
+			if _, ok := content.Tags[event.RoomTagFavourite]; !ok {
+				continue
+			}
+			if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO rooms(id) VALUES(?)", room.String()); err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, "INSERT INTO room_pins(room_id) VALUES(?)", room.String()); err != nil {
+				return err
+			}
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	b.updateAlertSettings(res, true)
+	b.Changed()
+	return nil
 }

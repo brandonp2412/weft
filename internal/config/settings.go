@@ -14,6 +14,7 @@ type Settings struct {
 	TimeFormat           string `toml:"time_format"`
 	DesktopNotifications bool   `toml:"desktop_notifications"`
 	NotificationPreviews bool   `toml:"notification_previews"`
+	ImagePreviews        bool   `toml:"image_previews"`
 	KeyboardMode         string `toml:"keyboard_mode"`
 	ShowSidebar          bool   `toml:"show_sidebar"`
 	HistoryLimit         int    `toml:"history_limit"`

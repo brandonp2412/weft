@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"image"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -11,6 +13,8 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 	"weft/internal/config"
 	"weft/internal/matrix"
 	"weft/internal/store"
@@ -27,47 +31,57 @@ type resultMsg struct {
 	details string
 }
 type Model struct {
-	settings            config.Settings
-	viInsert            bool
-	viPending           string
-	viCount             int
-	viRegister          string
-	viLinewise          bool
-	viUndo              []viSnapshot
-	viRedo              []viSnapshot
-	focused             bool
-	lastRead            map[string]string
-	backend             *matrix.Backend
-	db                  *store.Store
-	demo                bool
-	width, height       int
-	rooms               []store.Room
-	messages            []store.Message
-	names               map[string]string
-	current             string
-	selected            string
-	input               textarea.Model
-	prompt              textinput.Model
-	mode                string
-	promptIndex         int
-	completionIndex     int
-	completionDismissed string
-	details             string
-	status              string
-	statusError         bool
-	connection          string
-	verification        *matrix.Verification
-	busy                bool
-	historyBusy         bool
-	limit               int
-	scroll              int
-	rendered            []string
-	spans               map[string][2]int
-	reply, thread, edit string
-	drafts              map[string]string
-	search              []store.Message
-	lastTyping          time.Time
-	ctx                 context.Context
+	settings              config.Settings
+	viInsert              bool
+	viPending             string
+	viCount               int
+	viRegister            string
+	viLinewise            bool
+	viUndo                []viSnapshot
+	viRedo                []viSnapshot
+	focused               bool
+	lastRead              map[string]string
+	backend               *matrix.Backend
+	db                    *store.Store
+	demo                  bool
+	width, height         int
+	rooms                 []store.Room
+	messages              []store.Message
+	names                 map[string]string
+	current               string
+	selected              string
+	input                 textarea.Model
+	prompt                textinput.Model
+	mode                  string
+	promptIndex           int
+	completionIndex       int
+	completionDismissed   string
+	details               string
+	status                string
+	statusError           bool
+	connection            string
+	verification          *matrix.Verification
+	busy                  bool
+	clipboardRequest      uint64
+	attachment            *stagedAttachment
+	attachmentPreview     *image.NRGBA
+	previewing            string
+	previews              map[string]*image.NRGBA
+	previewOrder          []string
+	graphics              *sixelOutput
+	sixelSupported        bool
+	cellWidth, cellHeight int
+	timelineTiles         []timelineTile
+	historyBusy           bool
+	limit                 int
+	scroll                int
+	rendered              []string
+	spans                 map[string][2]int
+	reply, thread, edit   string
+	drafts                map[string]string
+	search                []store.Message
+	lastTyping            time.Time
+	ctx                   context.Context
 }
 
 func New(ctx context.Context, b *matrix.Backend, db *store.Store, demo bool) Model {
@@ -101,10 +115,14 @@ func NewWithSettings(ctx context.Context, b *matrix.Backend, db *store.Store, de
 	return m
 }
 func (m Model) Init() tea.Cmd {
-	if m.demo {
-		return textarea.Blink
+	var probe tea.Cmd
+	if m.graphics != nil {
+		probe = tea.Raw(ansi.RequestPrimaryDeviceAttributes)
 	}
-	return tea.Batch(textarea.Blink, m.waitUpdates(), m.waitNotices(), m.waitVerification(), m.waitNotifications())
+	if m.demo {
+		return tea.Batch(textarea.Blink, probe)
+	}
+	return tea.Batch(textarea.Blink, probe, m.waitUpdates(), m.waitNotices(), m.waitVerification(), m.waitNotifications())
 }
 func (m Model) waitUpdates() tea.Cmd {
 	return func() tea.Msg {
@@ -151,6 +169,9 @@ func (m *Model) reload() {
 		}
 	}
 	if !present {
+		m.clipboardRequest++
+		m.attachment = nil
+		m.attachmentPreview = nil
 		m.drafts[m.current] = m.input.Value()
 		m.current = ""
 		m.selected = ""
@@ -215,7 +236,11 @@ func (m *Model) reload() {
 	for _, msg := range messages {
 		m.names[msg.Sender] = m.db.MemberName(m.current, msg.Sender)
 	}
-	// Preserve the top event while new content is appended above a scrolled viewport.
+	m.renderTimelineAtAnchor()
+}
+
+// Preserve the top event when new messages or previews change the timeline height.
+func (m *Model) renderTimelineAtAnchor() {
 	anchor, anchorOffset := "", 0
 	if m.scroll > 0 {
 		top := max(0, len(m.rendered)-m.timelineHeight()-m.scroll)
@@ -268,7 +293,14 @@ func (m Model) sidebarRoomRange() (int, int) {
 	start := max(0, selected-available+1)
 	return start, min(len(m.rooms), start+available)
 }
-func (m Model) timelineHeight() int { return max(1, m.height-11-m.completionHeight()) }
+func (m Model) timelineHeight() int {
+	return max(1, m.height-11-m.completionHeight()-m.composerPreviewHeight())
+}
+func (m Model) visibleTimeline() (int, int) {
+	height := m.timelineHeight()
+	start := max(0, len(m.rendered)-height-m.scroll)
+	return start, min(len(m.rendered), start+height)
+}
 func (m *Model) clampScroll() {
 	m.scroll = min(max(0, m.scroll), max(0, len(m.rendered)-m.timelineHeight()))
 }
@@ -276,6 +308,9 @@ func (m *Model) switchRoom(room string) {
 	if room == m.current {
 		return
 	}
+	m.clipboardRequest++
+	m.attachment = nil
+	m.attachmentPreview = nil
 	m.drafts[m.current] = m.input.Value()
 	m.viUndo = nil
 	m.viRedo = nil
@@ -330,11 +365,13 @@ func (m *Model) selectMessage(delta int) {
 	m.clampScroll()
 }
 func (m *Model) openPrompt(mode string) {
+	m.clipboardRequest++
 	m.mode = mode
 	m.prompt.Reset()
 	m.prompt.EchoMode = textinput.EchoNormal
 	m.prompt.Placeholder = ""
 	m.promptIndex = 0
+	m.prompt.SetWidth(max(10, min(100, max(28, m.width-8))-6))
 	m.input.Blur()
 	m.prompt.Focus()
 	if mode == "recover" || mode == "recover-passphrase" || mode == "setup-keys" {
@@ -350,6 +387,7 @@ func (m *Model) openPrompt(mode string) {
 	}
 }
 func (m *Model) closePrompt() {
+	m.clipboardRequest++
 	m.mode = ""
 	m.prompt.Reset()
 	m.prompt.Blur()
@@ -387,6 +425,17 @@ func (m *Model) history() tea.Cmd {
 	}
 }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.update(msg)
+	if !m.settings.ImagePreviews {
+		return updated, cmd
+	}
+	next := updated.(Model)
+	next.clampScroll()
+	preview := next.nextImagePreview()
+	return next, tea.Batch(cmd, preview)
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.FocusMsg:
 		m.focused = true
@@ -394,13 +443,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BlurMsg:
 		m.focused = false
 		return m, nil
+	case uv.PrimaryDeviceAttributesEvent:
+		if m.graphics != nil && slices.Contains(v, 4) {
+			m.sixelSupported = true
+			return m, tea.Raw(ansi.WindowOp(16))
+		}
+		return m, nil
+	case uv.CellSizeEvent:
+		if m.sixelSupported && v.Width > 0 && v.Width <= 256 && v.Height > 0 && v.Height <= 256 {
+			m.cellWidth, m.cellHeight = v.Width, v.Height
+			m.renderTimelineAtAnchor()
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
 		m.input.SetWidth(max(8, m.mainWidth()-4))
-		m.prompt.SetWidth(max(10, m.width-12))
+		m.prompt.SetWidth(max(10, min(100, max(28, m.width-8))-6))
 		m.renderTimeline()
 		m.clampScroll()
+		if m.sixelSupported {
+			return m, tea.Raw(ansi.WindowOp(16))
+		}
 		return m, nil
 	case notificationMsg:
 		return m, tea.Batch(m.waitNotifications(), m.desktopNotification(store.Message(v)))
@@ -459,15 +523,76 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.reload()
 		return m, nil
-	case tea.PasteMsg:
-		if m.mode == "" && m.input.Value() == "" {
-			if path, ok := droppedFile(v.Content); ok {
-				m.input.SetValue("/upload " + path)
-				m.status = "Attachment ready — press Enter to upload"
+	case imagePreviewMsg:
+		if v.attachment != nil {
+			if v.attachment == m.attachment {
+				m.attachmentPreview = v.image
+			}
+			return m, nil
+		}
+		m.previewing = ""
+		if m.previews == nil {
+			m.previews = make(map[string]*image.NRGBA)
+		}
+		if len(m.previewOrder) == previewCacheSize {
+			delete(m.previews, m.previewOrder[0])
+			m.previewOrder = m.previewOrder[1:]
+		}
+		m.previews[v.eventID] = v.image
+		m.previewOrder = append(m.previewOrder, v.eventID)
+		m.renderTimelineAtAnchor()
+		return m, nil
+	case clipboardResult:
+		if v.request != m.clipboardRequest {
+			return m, nil
+		}
+		if v.err != nil {
+			m.fail(v.err)
+			return m, nil
+		}
+		if v.image != nil {
+			if m.mode == "" {
+				m.attachment = v.image
+				m.attachmentPreview = nil
+				m.status = ""
 				m.statusError = false
-				if m.settings.KeyboardMode == "vi" {
-					m.viInsert = true
+				cmd := m.previewAttachment()
+				return m, cmd
+			}
+			return m, nil
+		}
+		if v.text != "" {
+			return m.update(tea.PasteMsg{Content: v.text})
+		}
+		return m, nil
+	case tea.PasteMsg:
+		if !isTextPaste(v.Content) {
+			m.status = "Binary paste ignored. Use Ctrl+V to attach an image or drop a local file."
+			m.statusError = true
+			return m, nil
+		}
+		if m.mode == "" {
+			if path, ok := droppedFile(v.Content); ok {
+				m.clipboardRequest++
+				if m.input.Value() != "" || m.settings.ImagePreviews {
+					m.attachment = &stagedAttachment{path: path}
+					m.attachmentPreview = nil
+					m.status = ""
+					m.statusError = false
+					cmd := m.previewAttachment()
+					return m, cmd
+				} else {
+					m.attachment = nil
+					m.attachmentPreview = nil
+					m.input.SetValue("/upload " + path)
+					m.input.Focus()
+					m.input.CursorEnd()
+					m.status = "Attachment ready — press Enter to upload"
+					if m.settings.KeyboardMode == "vi" {
+						m.viInsert = true
+					}
 				}
+				m.statusError = false
 				return m, nil
 			}
 		}
@@ -476,8 +601,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "ctrl+c" {
 			return m, tea.Quit
 		}
+		if key == "ctrl+v" {
+			switch m.mode {
+			case "", "rooms", "search", "recover", "recover-passphrase", "setup-keys":
+				cmd := m.pasteClipboard()
+				return m, cmd
+			}
+		}
 		if m.mode != "" {
 			return m.updateModal(v)
+		}
+		switch key {
+		case "esc":
+			m.clipboardRequest++
+			if m.attachment != nil {
+				m.attachment = nil
+				m.attachmentPreview = nil
+				m.status = "Attachment discarded"
+				m.statusError = false
+				return m, nil
+			}
+		case "enter":
+			if attachment := m.attachment; attachment != nil {
+				room := m.current
+				cmd := m.run("Attachment queued", func(ctx context.Context) error {
+					if attachment.path != "" {
+						return m.backend.Upload(ctx, room, attachment.path)
+					}
+					return m.backend.UploadBytes(ctx, room, attachment.name, attachment.mimeType, attachment.data)
+				})
+				if cmd != nil {
+					m.attachment = nil
+					m.attachmentPreview = nil
+				}
+				return m, cmd
+			}
 		}
 
 		if m.settings.KeyboardMode == "vi" {
@@ -568,6 +726,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "f1":
+			m.clipboardRequest++
 			m.mode = "help"
 			m.input.Blur()
 			return m, nil
@@ -644,7 +803,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.mode != "" {
 		if m.mode == "rooms" || m.mode == "search" || m.mode == "recover" || m.mode == "recover-passphrase" || m.mode == "setup-keys" {
+			before := m.prompt.Value()
 			m.prompt, cmd = m.prompt.Update(msg)
+			if m.prompt.Value() != before {
+				m.promptIndex = 0
+			}
 		}
 		return m, cmd
 	}
@@ -661,6 +824,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 func (m Model) updateModal(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	key := v.String()
+	if m.mode == "quit" {
+		switch key {
+		case "y", "Y":
+			return m, tea.Quit
+		case "n", "N", "esc":
+			m.closePrompt()
+		}
+		return m, nil
+	}
 	if key == "esc" {
 		m.closePrompt()
 		return m, nil
@@ -710,6 +882,9 @@ func (m Model) updateModal(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if key == "down" {
 		m.promptIndex++
+		if m.mode == "rooms" {
+			m.promptIndex = min(m.promptIndex, max(0, len(m.filteredRooms())-1))
+		}
 		return m, nil
 	}
 	if key == "enter" {
@@ -786,8 +961,9 @@ func (m Model) updateModal(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
+	before := m.prompt.Value()
 	m.prompt, cmd = m.prompt.Update(v)
-	if key != "up" && key != "down" {
+	if m.prompt.Value() != before {
 		m.promptIndex = 0
 	}
 	return m, cmd

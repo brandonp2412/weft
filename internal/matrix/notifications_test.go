@@ -24,10 +24,14 @@ func TestSyncNotifications(t *testing.T) {
 	ds := mautrix.NewDefaultSyncer()
 	ds.OnEvent(b.handleEvent)
 	s := &syncer{DefaultSyncer: ds, b: b}
-	process := func(events string) {
+	process := func(events string, accountData ...string) {
 		t.Helper()
 		var res mautrix.RespSync
-		err := json.Unmarshal([]byte(`{"next_batch":"next","rooms":{"join":{"!room:test":{"timeline":{"events":`+events+`}}}}}`), &res)
+		roomData, globalData := "[]", "[]"
+		if len(accountData) > 0 {
+			roomData, globalData = accountData[0], accountData[1]
+		}
+		err := json.Unmarshal([]byte(`{"next_batch":"next","account_data":{"events":`+globalData+`},"rooms":{"join":{"!room:test":{"account_data":{"events":`+roomData+`},"timeline":{"events":`+events+`}}}}}`), &res)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,6 +60,23 @@ func TestSyncNotifications(t *testing.T) {
 	process("[" + fresh + "]")
 	if len(b.Notifications) != 0 {
 		t.Fatal("duplicate notification")
+	}
+	low := `[{"type":"m.tag","content":{"tags":{"m.lowpriority":{}}}}]`
+	clearTags := `[{"type":"m.tag","content":{"tags":{}}}]`
+	mute := `[{"type":"m.push_rules","content":{"global":{"override":[{"rule_id":"!room:test","enabled":true,"actions":["dont_notify"],"conditions":[{"kind":"event_match","key":"room_id","pattern":"!room:test"}]}]}}}]`
+	unmute := `[{"type":"m.push_rules","content":{"global":{"override":[]}}}]`
+	process("["+msg("$low", "@other:test", `{"msgtype":"m.text","body":"low priority"}`)+"]", low, "[]")
+	process("["+msg("$muted", "@other:test", `{"msgtype":"m.text","body":"muted"}`)+"]", clearTags, mute)
+	process("[" + msg("$still-muted", "@other:test", `{"msgtype":"m.text","body":"still muted"}`) + "]")
+	if len(b.Notifications) != 0 {
+		t.Fatal("low-priority or muted room notified")
+	}
+	if _, err := db.Message("$muted"); err != nil {
+		t.Fatalf("muted message was not saved: %v", err)
+	}
+	process("["+msg("$unmuted", "@other:test", `{"msgtype":"m.text","body":"unmuted"}`)+"]", "[]", unmute)
+	if len(b.Notifications) != 1 || (<-b.Notifications).ID != "$unmuted" {
+		t.Fatal("alerts did not resume after unmuting")
 	}
 	historical := &event.Event{ID: "$history", RoomID: "!room:test", Sender: "@other:test", Type: event.EventMessage, Content: event.Content{Parsed: &event.MessageEventContent{MsgType: event.MsgText, Body: "history"}}}
 	b.handleEvent(context.Background(), historical)

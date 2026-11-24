@@ -99,7 +99,7 @@ Press F1 or type /help inside the client for commands.
 		if e = tui.SeedDemo(db); e != nil {
 			return e
 		}
-		_, e = tea.NewProgram(tui.NewWithSettings(ctx, nil, db, true, settings), tea.WithContext(ctx)).Run()
+		_, e = tui.Run(ctx, tui.NewWithSettings(ctx, nil, db, true, settings))
 		if errors.Is(e, tea.ErrProgramKilled) && ctx.Err() != nil {
 			return nil
 		}
@@ -127,7 +127,7 @@ Press F1 or type /help inside the client for commands.
 	}
 	defer backend.Close()
 	backend.Start()
-	_, e = tea.NewProgram(tui.NewWithSettings(ctx, backend, backend.Store, false, settings), tea.WithContext(ctx)).Run()
+	_, e = tui.Run(ctx, tui.NewWithSettings(ctx, backend, backend.Store, false, settings))
 	if errors.Is(e, tea.ErrProgramKilled) && ctx.Err() != nil {
 		return nil
 	}

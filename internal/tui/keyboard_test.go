@@ -269,3 +269,48 @@ func TestViZZQuits(t *testing.T) {
 		t.Fatal("ZZ intercepted insert mode typing")
 	}
 }
+
+func TestViQuitConfirmation(t *testing.T) {
+	for _, cancel := range []string{"n", "N", "esc"} {
+		t.Run(cancel, func(t *testing.T) {
+			m := viModel(t)
+			m.input.SetValue("draft")
+			m.viSetPos(2)
+			m = viKeys(m, "q")
+			if m.mode != "quit" || !strings.Contains(m.modalView(), "(y/n)") {
+				t.Fatal("q did not open exit confirmation")
+			}
+			m = viKeys(m, "x")
+			if m.mode != "quit" {
+				t.Fatal("unrelated key dismissed confirmation")
+			}
+			m = viKeys(m, cancel)
+			if m.mode != "" || m.viInsert || m.input.Value() != "draft" || m.viPos() != 2 || !m.input.Focused() {
+				t.Fatal("cancel did not restore draft in normal mode")
+			}
+		})
+	}
+	for _, yes := range []string{"y", "Y"} {
+		m := viKeys(viModel(t), "q")
+		_, cmd := m.Update(tea.KeyPressMsg{Code: []rune(yes)[0], Text: yes})
+		if cmd == nil {
+			t.Fatal("confirmation did not quit")
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Fatal("confirmation did not return QuitMsg")
+		}
+	}
+	m := viKeys(viModel(t), "q", "n")
+	if m.input.Focused() {
+		t.Fatal("cancel focused empty normal-mode draft")
+	}
+	m = viKeys(m, "i", "q")
+	if m.mode != "" || m.input.Value() != "q" {
+		t.Fatal("q intercepted insert mode typing")
+	}
+	normal := demoModel(t)
+	updated, _ := normal.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if updated.(Model).mode != "" || updated.(Model).input.Value() != "q" {
+		t.Fatal("q intercepted normal keyboard typing")
+	}
+}

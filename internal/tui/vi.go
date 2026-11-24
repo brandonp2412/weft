@@ -233,6 +233,10 @@ func (m *Model) updateVi(key string) (tea.Cmd, bool) {
 		return nil, true
 	}
 	switch key {
+	case "q":
+		m.mode = "quit"
+		m.input.Blur()
+		return nil, true
 	case "i", "enter":
 		return m.viInsertMode(), true
 	case "a":

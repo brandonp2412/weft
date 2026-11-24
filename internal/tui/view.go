@@ -36,8 +36,14 @@ func (m Model) timeLayout() string {
 	return "15:04"
 }
 
+type timelineTile struct {
+	row  int
+	tile sixelTile
+}
+
 func (m *Model) renderTimeline() {
 	m.rendered = nil
+	m.timelineTiles = nil
 	m.spans = map[string][2]int{}
 	width := max(10, m.mainWidth()-6)
 	date := ""
@@ -101,6 +107,15 @@ func (m *Model) renderTimeline() {
 		for _, l := range strings.Split(wrapped, "\n") {
 			m.rendered = append(m.rendered, bodyStyle.Render("    "+l))
 		}
+		if m.settings.ImagePreviews && !msg.Redacted && msg.Kind == "m.image" {
+			thumb := m.previews[msg.ID]
+			if tile := m.imageTile(thumb, width, min(17, max(1, m.height-13))); tile.image != nil {
+				m.timelineTiles = append(m.timelineTiles, timelineTile{len(m.rendered), tile})
+				m.rendered = append(m.rendered, tile.blankLines()...)
+			} else {
+				m.rendered = append(m.rendered, previewLines(thumb, width, previewRows)...)
+			}
+		}
 		if msg.Reactions != "" {
 			m.rendered = append(m.rendered, accentStyle.Render(clip("    "+oneLine(msg.Reactions), width+4)))
 		}
@@ -118,15 +133,18 @@ func (m Model) sidebar() string {
 	start, end := m.sidebarRoomRange()
 	for _, r := range m.rooms[start:end] {
 		icon := " "
+		if r.Pinned {
+			icon = "*"
+		}
 		if r.Membership == "invite" {
 			icon = "+"
 		}
 		suffix := ""
 		if r.Unread > 0 {
-			suffix = fmt.Sprintf(" %d", r.Unread)
+			suffix = " ●"
 		}
 		text := " " + icon + " " + oneLine(r.Title())
-		text = clip(text, w-2-ansi.StringWidth(suffix)) + suffix
+		text = fit(text, w-2-ansi.StringWidth(suffix)) + suffix
 		s := lipgloss.NewStyle().Foreground(muted)
 		if r.ID == m.current {
 			s = s.Foreground(teal).Background(line).Bold(true)
@@ -141,7 +159,7 @@ func (m Model) sidebar() string {
 	rows = append(rows, dimStyle.Render(clip("  "+oneLine(m.userID()), w-2)), dimStyle.Render("  ^K switch rooms"))
 	return lipgloss.NewStyle().Width(w - 1).Height(m.height - 1).Background(panel).BorderRight(true).BorderStyle(lipgloss.NormalBorder()).BorderForeground(line).Render(strings.Join(rows, "\n"))
 }
-func (m Model) mainView() string {
+func (m Model) mainView() (string, []sixelPlacement) {
 	w := m.mainWidth()
 	r := m.room()
 	title := oneLine(r.Title())
@@ -162,9 +180,19 @@ func (m Model) mainView() string {
 	}
 	rows := []string{fit(header, w), dimStyle.Render(fit("  "+clip(topic, w-4), w)), dimStyle.Render(strings.Repeat("─", w))}
 	height := m.timelineHeight()
-	start := max(0, len(m.rendered)-height-m.scroll)
-	end := min(len(m.rendered), start+height)
+	start, end := m.visibleTimeline()
 	timeline := m.rendered[start:end]
+	var images []sixelPlacement
+	for _, positioned := range m.timelineTiles {
+		top := max(start, positioned.row)
+		bottom := min(end, positioned.row+positioned.tile.rows())
+		if bottom > top {
+			images = append(images, sixelPlacement{
+				tile: positioned.tile, x: m.sidebarWidth() + 4, y: len(rows) + top - start,
+				firstRow: top - positioned.row, rows: bottom - top,
+			})
+		}
+	}
 	if len(m.messages) == 0 {
 		welcome := []string{"", "  A little space to talk.", "", "  Your messages will appear here.", "  Ctrl+K switches rooms. /join joins a room.", "  /create name starts an encrypted room.", "", "  Press F1 for the keyboard guide."}
 		if r.Membership == "invite" {
@@ -201,12 +229,32 @@ func (m Model) mainView() string {
 			contextLine = strings.Join(users, ", ") + " typing…"
 		}
 	}
-	rows = append(rows, dimStyle.Render(fit("  "+clip(contextLine, w-4), w)), dimStyle.Render(strings.Repeat("─", w)), m.input.View())
+	rows = append(rows, dimStyle.Render(fit("  "+clip(contextLine, w-4), w)), dimStyle.Render(strings.Repeat("─", w)))
+	rows = append(rows, strings.Split(m.input.View(), "\n")...)
+	if tile := m.composerTile(); tile.image != nil {
+		images = append(images, sixelPlacement{tile: tile, x: m.sidebarWidth() + 4, y: len(rows), rows: tile.rows()})
+		rows = append(rows, tile.blankLines()...)
+	} else {
+		for _, row := range m.composerPreview() {
+			rows = append(rows, fit(row, w))
+		}
+	}
 	statusStyle := dimStyle
 	if m.statusError {
 		statusStyle = lipgloss.NewStyle().Foreground(red)
 	}
 	status := m.status
+	if m.attachment != nil {
+		attachment := "Image ready · Enter uploads · Esc discards"
+		if m.attachment.path != "" {
+			attachment = "File ready · Enter uploads · Esc discards"
+		}
+		if status == "" {
+			status = attachment
+		} else {
+			status += " · " + attachment
+		}
+	}
 	if m.settings.KeyboardMode == "vi" {
 		label := "VI NORMAL"
 		if m.viInsert {
@@ -221,20 +269,26 @@ func (m Model) mainView() string {
 	}
 	footer := accentStyle.Render("  ● ") + dimStyle.Render(clip(oneLine(connection), w-6))
 	rows = append(rows, fit(footer, w))
-	return lipgloss.NewStyle().Width(w).Height(m.height).Background(bg).Render(strings.Join(rows, "\n"))
+	return lipgloss.NewStyle().Width(w).Height(m.height).Background(bg).Render(strings.Join(rows, "\n")), images
 }
 func (m Model) View() tea.View {
 	var content string
+	var images []sixelPlacement
 	if m.width < 36 || m.height < 14 {
 		content = "weft\nResize the terminal to at least 36 × 14.\nCtrl+C exits."
 	} else if m.mode != "" {
 		content = m.modalView()
 	} else {
-		content = lipgloss.JoinHorizontal(lipgloss.Top, m.sidebar(), m.mainView())
+		var main string
+		main, images = m.mainView()
+		content = lipgloss.JoinHorizontal(lipgloss.Top, m.sidebar(), main)
 	}
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.WindowTitle = "weft"
+	if m.graphics != nil {
+		v.WindowTitle = m.graphics.frameTitle(images)
+	}
 	v.BackgroundColor = bg
 	v.ForegroundColor = ink
 	v.MouseMode = tea.MouseModeCellMotion
@@ -248,6 +302,10 @@ func (m Model) modalView() string {
 	lines := []string{}
 	footer := "Esc returns to chat"
 	switch m.mode {
+	case "quit":
+		title = "Exit weft?"
+		lines = []string{"Are you sure you want to exit? (y/n)"}
+		footer = "y exit · n/Esc cancel"
 	case "rooms":
 		title = "Switch conversation"
 		lines = append(lines, m.prompt.View(), "")
@@ -256,7 +314,11 @@ func (m Model) modalView() string {
 		start := max(0, index-height+4)
 		for i := start; i < min(len(rooms), start+height-3); i++ {
 			r := rooms[i]
-			text := clip("  "+oneLine(r.Title())+"  "+r.ID, width-6)
+			label := oneLine(r.Title())
+			if r.Pinned {
+				label = "* " + label
+			}
+			text := clip("  "+label+"  "+r.ID, width-6)
 			if i == index {
 				text = accentStyle.Bold(true).Render("› " + strings.TrimSpace(text))
 			}
@@ -315,7 +377,7 @@ func (m Model) modalView() string {
 		title = "weft · keyboard & commands"
 		text := helpText
 		if m.settings.KeyboardMode == "vi" {
-			text = "Vi: empty draft j/k chats · gg/G first/last chat\nDraft: h/j/k/l move · w/b/e words · 0/^/$ line · gg/G draft ends\nEnter/i/a/I/A insert · ZZ quit · o/O open line · Esc normal · counts: 3j, 2dd\nd/c/y + motion · dd/cc/yy line · D/C to end · x delete\np/P paste · u undo · Ctrl+R redo · : command (empty draft) · / search\n\n" + text
+			text = "Vi: empty draft j/k chats · gg/G first/last chat\nDraft: h/j/k/l move · w/b/e words · 0/^/$ line · gg/G draft ends\nEnter/i/a/I/A insert · q exit (y/n) · ZZ quit · o/O open line · Esc normal · counts: 3j, 2dd\nd/c/y + motion · dd/cc/yy line · D/C to end · x delete\np/P paste · u undo · Ctrl+R redo · : command (empty draft) · / search\n\n" + text
 		}
 		lines = strings.Split(text, "\n")
 		footer = "Enter or Esc returns to chat"
@@ -332,6 +394,12 @@ func (m Model) modalView() string {
 	}
 	if len(wrapped) > height {
 		wrapped = wrapped[:height]
+	}
+	if m.mode == "rooms" {
+		// Keep the input and footer stationary as filtering changes the result count.
+		for len(wrapped) < height {
+			wrapped = append(wrapped, "")
+		}
 	}
 	box := lipgloss.NewStyle().Width(width).Padding(1, 2).Border(lipgloss.RoundedBorder()).BorderForeground(teal).Background(panel).Foreground(ink).Render(accentStyle.Bold(true).Render(title) + "\n\n" + strings.Join(wrapped, "\n") + "\n\n" + dimStyle.Render(clip(footer, width-6)))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
@@ -354,6 +422,7 @@ Messages: Ctrl+↑/↓ to select, then use selected or $eventID
 /discard selected (cancel a queued send)    //text sends /text
 
 Rooms
+/pin /unpin                         Matrix favourite
 /join #alias:server or !roomID        /leave confirm
 /create room name (encrypted)        /dm @user:server
 /invite @user:server                 /members

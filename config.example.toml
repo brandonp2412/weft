@@ -3,6 +3,7 @@
 keyboard_mode = "normal" # "normal" or "vi"
 time_format = "24h" # "12h" (AM/PM) or "24h"
 show_sidebar = true
+image_previews = false # Show image thumbnails in chat and for staged attachments.
 history_limit = 150 # Initial cached messages per room (1–10000).
 history_page_size = 50 # Additional cached messages per history request (1–10000).
 mouse_scroll_lines = 3 # Lines per mouse wheel event (1–100).

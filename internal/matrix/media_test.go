@@ -2,9 +2,16 @@ package matrix
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/crypto/attachment"
 	"maunium.net/go/mautrix/event"
 	"weft/internal/store"
@@ -54,5 +61,65 @@ func TestEmbedEncryptedImage(t *testing.T) {
 	}
 	if err = b.Image("!room:test", "mxc://test/existing", "Existing"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEncryptedImageThumbnailAndDownload(t *testing.T) {
+	original, thumb := []byte("original image"), []byte("thumbnail")
+	ciphertext := slices.Clone(thumb)
+	encrypted := attachment.NewEncryptedFile()
+	encrypted.EncryptInPlace(ciphertext)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/thumb"):
+			_, _ = w.Write(ciphertext)
+		case strings.HasSuffix(r.URL.Path, "/full"):
+			_, _ = w.Write(original)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client, err := mautrix.NewClient(server.URL, "@user:test", "test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = db.EnsureRoom("!room:test"); err != nil {
+		t.Fatal(err)
+	}
+	content := &event.MessageEventContent{
+		MsgType: event.MsgImage, Body: "photo.png", URL: "mxc://test/full",
+		Info: &event.FileInfo{
+			ThumbnailFile: &event.EncryptedFileInfo{EncryptedFile: *encrypted, URL: "mxc://test/thumb"},
+		},
+	}
+	raw, err := json.Marshal(&event.Event{Type: event.EventMessage, Content: event.Content{Parsed: content}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.SaveMessage(store.Message{ID: "$image", RoomID: "!room:test", Kind: "m.image", Body: content.Body, Raw: raw}, false); err != nil {
+		t.Fatal(err)
+	}
+	b := &Backend{Store: db, Client: client}
+	got, err := b.ImagePreview(t.Context(), "$image", 8<<20, true)
+	if err != nil || !slices.Equal(got, thumb) {
+		t.Fatalf("image preview: %q, %v", got, err)
+	}
+	got, err = b.ImagePreview(t.Context(), "$image", 8<<20, false)
+	if err != nil || !slices.Equal(got, original) {
+		t.Fatalf("original image preview: %q, %v", got, err)
+	}
+	path := filepath.Join(t.TempDir(), "original")
+	if err := b.Download(t.Context(), "$image", path); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil || !slices.Equal(got, original) {
+		t.Fatalf("download: %q, %v", got, err)
 	}
 }

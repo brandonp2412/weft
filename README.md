@@ -102,6 +102,7 @@ Preferences are separate from session credentials and the data directory.
 | Key | Action in vi navigation mode |
 | --- | --- |
 | `i` or Enter / `a` | Insert before / after the cursor |
+| `q` | Confirm exit (y/n) from vi normal mode |
 | `ZZ` | Quit from vi normal mode |
 | `I` / `A` | Insert at first nonblank / end of line |
 | `o` / `O` | Open a line below / above |
@@ -148,8 +149,8 @@ Weft skips the first sync after launch, cached messages, history requests, edits
 and your own messages. It also suppresses alerts for the focused conversation
 when you are at the bottom of its timeline. Other rooms and messages arriving
 while the terminal is unfocused or scrolled up produce alerts. Focus detection
-requires a terminal that supports focus reporting. Alerts cover incoming messages;
-Matrix push rules and room mute settings are not applied yet.
+requires a terminal that supports focus reporting. Muted rooms and rooms tagged
+as low priority are silent.
 
 ## Keyboard
 
@@ -195,6 +196,7 @@ To refer to a message, select it with Ctrl+↑/↓ and use `selected`, or use a 
 | `/discard #3` | Remove a queued send; a request already in flight may still be delivered |
 | `/read` | Send a read marker |
 | `/rooms` | Open the room picker |
+| `/pin` / `/unpin` | Set or remove the Matrix favourite tag; favourites from other clients also stay at the top |
 | `/join #alias:server` | Join a room; `/join` accepts the selected invitation |
 | `/leave confirm` | Leave the selected room or decline its invitation |
 | `/create room name` | Create a private encrypted room |
@@ -215,8 +217,20 @@ Start a normal message with `//` to send a leading `/`. In the verification dial
 
 Drag an image or file from your file manager into the terminal, then press Enter
 to upload it. This works with terminals that paste a local path or `file://` URL,
-including quoted paths and paths with escaped spaces. Drop into an empty composer;
-text already in the composer is preserved.
+including quoted paths and paths with escaped spaces. A drop preserves any
+existing text draft. Press Esc to discard a file staged alongside a draft.
+
+On Wayland, Ctrl+V reads images through `wl-paste` (from `wl-clipboard`).
+Press Enter to upload the staged image or Esc to discard it. Your text draft
+stays in the composer.
+
+Set `image_previews = true` in `~/.config/weft/config.toml` and restart Weft to show
+image previews in the timeline and for staged attachments. Weft fetches
+the original as messages come into view, falling back to the attached thumbnail
+when the original cannot be previewed. Previews are kept in memory.
+Sixel-capable terminals such as Foot draw previews as images. Other terminals
+use colored characters. PNG, JPEG, and GIF thumbnails are supported up to
+8 MiB and 16 megapixels.
 
 Attachments are handled in memory and limited to 64 MiB. Your server may have a smaller limit.
 
@@ -269,4 +283,4 @@ See [the architecture notes](docs/architecture.md) for the package boundaries an
 
 ## Current scope
 
-Weft currently supports text chat and image/file attachments. Calls, account registration, a spaces hierarchy, mobile push notifications, terminal image previews, polls, and administration tools are not implemented.
+Weft currently supports text chat and image/file attachments. Calls, account registration, a spaces hierarchy, mobile push notifications, polls, and administration tools are not implemented.

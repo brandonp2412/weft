@@ -34,27 +34,30 @@ type Verification struct {
 	SAS    string
 }
 type Backend struct {
-	cryptoMu      sync.Mutex
-	keyRequests   map[string]time.Time
-	tasks         chan func(context.Context)
-	Client        *mautrix.Client
-	Store         *store.Store
-	Crypto        *cryptohelper.CryptoHelper
-	Verify        *verificationhelper.VerificationHelper
-	Notifications chan store.Message
-	Updates       chan struct{}
-	Notices       chan Notice
-	Verifications chan Verification
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	wake          chan struct{}
-	synced        chan struct{}
-	syncOnce      sync.Once
-	mu            sync.Mutex
-	persistErr    error
-	typing        map[string][]string
-	logFile       *os.File
+	cryptoMu                 sync.Mutex
+	keyRequests              map[string]time.Time
+	tasks                    chan func(context.Context)
+	Client                   *mautrix.Client
+	Store                    *store.Store
+	Crypto                   *cryptohelper.CryptoHelper
+	Verify                   *verificationhelper.VerificationHelper
+	Notifications            chan store.Message
+	Updates                  chan struct{}
+	Notices                  chan Notice
+	Verifications            chan Verification
+	ctx                      context.Context
+	cancel                   context.CancelFunc
+	wg                       sync.WaitGroup
+	wake                     chan struct{}
+	synced                   chan struct{}
+	syncOnce                 sync.Once
+	mu                       sync.Mutex
+	persistErr               error
+	typing                   map[string][]string
+	logFile                  *os.File
+	lowPriority              map[id.RoomID]bool
+	mutedRooms               map[id.RoomID]bool
+	alertSettingsUnavailable bool
 }
 
 func Open(ctx context.Context, dir string, c *config.Config) (*Backend, error) {
@@ -125,6 +128,10 @@ func (b *Backend) Start() {
 	go func() {
 		defer b.wg.Done()
 		b.notice("Connecting…", false)
+		if e := b.SyncRoomTags(b.ctx); e != nil && b.ctx.Err() == nil {
+			b.alertSettingsUnavailable = true
+			b.notice("Room preferences: "+e.Error(), true)
+		}
 		if e := b.Client.SyncWithContext(b.ctx); e != nil && b.ctx.Err() == nil {
 			b.notice("Sync stopped: "+e.Error(), true)
 		}
@@ -252,7 +259,11 @@ func (s *syncer) ProcessResponse(ctx context.Context, res *mautrix.RespSync, sin
 	if e = b.Store.Put("next_batch", res.NextBatch); e != nil {
 		return e
 	}
+	b.updateAlertSettings(res, since == "")
 	for _, evt := range incoming {
+		if b.alertSettingsUnavailable || b.lowPriority[evt.RoomID] || b.mutedRooms[evt.RoomID] {
+			continue
+		}
 		if msg, err := b.Store.Message(evt.ID.String()); err == nil && !msg.Redacted {
 			select {
 			case b.Notifications <- msg:
@@ -318,6 +329,12 @@ func (b *Backend) handleEvent(ctx context.Context, evt *event.Event) {
 		return
 	}
 	switch evt.Type {
+	case event.AccountDataRoomTags:
+		_, pinned := evt.Content.AsTag().Tags[event.RoomTagFavourite]
+		b.record(b.Store.EnsureRoom(evt.RoomID.String()))
+		b.record(b.Store.PinRoom(evt.RoomID.String(), pinned))
+		b.Changed()
+		return
 	case event.EphemeralEventTyping:
 		users := evt.Content.AsTyping().UserIDs
 		names := []string{}

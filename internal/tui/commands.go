@@ -67,6 +67,31 @@ func (m *Model) command(line string) tea.Cmd {
 		m.mode = "help"
 		m.input.Blur()
 		return nil
+	case "pin", "unpin":
+		if room == "" {
+			return fail("Select a room first")
+		}
+		if arg != "" {
+			return fail("Usage: /" + command)
+		}
+		pinned := command == "pin"
+		success := "Room pinned"
+		if !pinned {
+			success = "Room unpinned"
+		}
+		if m.demo {
+			if err := m.db.PinRoom(room, pinned); err != nil {
+				m.fail(err)
+				return nil
+			}
+			m.reload()
+			m.statusError = false
+			m.status = success
+			return nil
+		}
+		return m.run(success, func(ctx context.Context) error {
+			return m.backend.PinRoom(ctx, room, pinned)
+		})
 	case "rooms":
 		m.openPrompt("rooms")
 		return nil
@@ -324,6 +349,7 @@ func (m *Model) command(line string) tea.Cmd {
 				m.thread = target
 				m.scroll = 0
 				m.reload()
+				return m.autoRead()
 			case "edit":
 				msg, e := m.db.Message(target)
 				if e != nil {
