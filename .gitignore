@@ -1,0 +1,8 @@
+/bin/
+/coverage.out
+*.test
+*.db
+*.db-wal
+*.db-shm
+session.json
+weft.log

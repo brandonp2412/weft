@@ -1,0 +1,112 @@
+package matrix
+
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"strings"
+
+	"maunium.net/go/mautrix/crypto/backup"
+	"maunium.net/go/mautrix/crypto/ssss"
+	"maunium.net/go/mautrix/crypto/verificationhelper"
+	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
+)
+
+func (b *Backend) verification(v Verification) {
+	select {
+	case b.Verifications <- v:
+	case <-b.ctx.Done():
+	}
+}
+func (b *Backend) VerificationRequested(_ context.Context, txn id.VerificationTransactionID, from id.UserID, device id.DeviceID) {
+	b.verification(Verification{Txn: txn, Stage: "requested", User: from.String(), Device: device.String()})
+}
+func (b *Backend) VerificationReady(ctx context.Context, txn id.VerificationTransactionID, device id.DeviceID, sas, scan bool, qr *verificationhelper.QRCode) {
+	if sas {
+		b.verification(Verification{Txn: txn, Stage: "ready", Device: device.String()})
+		// SDK callbacks run while its transaction lock is held. Re-enter
+		// the helper only after the callback has returned.
+		select {
+		case b.tasks <- func(ctx context.Context) {
+			if e := b.Verify.StartSAS(ctx, txn); e != nil {
+				b.notice("Start verification: "+e.Error(), true)
+			}
+		}:
+		case <-b.ctx.Done():
+		}
+	} else {
+		b.notice("Other device does not support SAS verification", true)
+	}
+}
+func (b *Backend) VerificationCancelled(_ context.Context, txn id.VerificationTransactionID, code event.VerificationCancelCode, reason string) {
+	b.verification(Verification{Txn: txn, Stage: "cancelled", SAS: reason})
+}
+func (b *Backend) VerificationDone(_ context.Context, txn id.VerificationTransactionID, method event.VerificationMethod) {
+	b.verification(Verification{Txn: txn, Stage: "done"})
+	b.notice("Device verified", false)
+}
+func (b *Backend) ShowSAS(_ context.Context, txn id.VerificationTransactionID, emojis []rune, descriptions []string, decimals []int) {
+	var parts []string
+	for i, r := range emojis {
+		d := ""
+		if i < len(descriptions) {
+			d = descriptions[i]
+		}
+		parts = append(parts, fmt.Sprintf("%c %s", r, d))
+	}
+	sas := strings.Join(parts, "  ")
+	if len(decimals) > 0 {
+		sas += fmt.Sprintf("\nNumbers: %v", decimals)
+	}
+	b.verification(Verification{Txn: txn, Stage: "sas", SAS: sas})
+}
+
+// Recover verifies the device using existing secret storage, then restores the
+// server's Megolm backup. It never replaces the user's cross-signing identity.
+func (b *Backend) Recover(ctx context.Context, secret string, passphrase bool) error {
+	b.cryptoMu.Lock()
+	defer b.cryptoMu.Unlock()
+	mach := b.Crypto.Machine()
+	keyID, metadata, e := mach.SSSS.GetDefaultKeyData(ctx)
+	if e != nil {
+		return e
+	}
+	var key *ssss.Key
+	if passphrase {
+		key, e = metadata.VerifyPassphrase(keyID, secret)
+	} else {
+		key, e = metadata.VerifyRecoveryKey(keyID, secret)
+	}
+	if e != nil {
+		return fmt.Errorf("unlock secret storage: %w", e)
+	}
+	if e = mach.FetchCrossSigningKeysFromSSSS(ctx, key); e != nil {
+		return fmt.Errorf("restore signing keys: %w", e)
+	}
+	if e = mach.SignOwnDevice(ctx, mach.OwnIdentity()); e != nil {
+		return e
+	}
+	if e = mach.SignOwnMasterKey(ctx); e != nil {
+		return e
+	}
+	secretType := event.Type{Type: "m.megolm_backup.v1", Class: event.AccountDataEventType}
+	data, e := mach.SSSS.GetDecryptedAccountData(ctx, secretType, key)
+	if e != nil {
+		return fmt.Errorf("device verified, but could not load backup key: %w", e)
+	}
+	raw, e := base64.RawStdEncoding.DecodeString(strings.TrimRight(string(data), "="))
+	if e != nil {
+		return fmt.Errorf("decode backup key: %w", e)
+	}
+	bk, e := backup.MegolmBackupKeyFromBytes(raw)
+	if e != nil {
+		return e
+	}
+	version, e := mach.DownloadAndStoreLatestKeyBackup(ctx, bk)
+	if e != nil {
+		return fmt.Errorf("device verified, but backup restoration failed: %w", e)
+	}
+	b.notice("Device verified; restored key backup "+string(version), false)
+	return b.retryDecrypt(ctx)
+}
