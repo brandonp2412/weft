@@ -110,6 +110,7 @@ func NewWithSettings(ctx context.Context, b *matrix.Backend, db *store.Store, de
 	}
 	if demo {
 		m.connection = "Offline demo"
+		m.previews = map[string]*image.NRGBA{demoImageID: decodePreview(demoImage)}
 	}
 	m.reload()
 	return m

@@ -1,10 +1,17 @@
 package tui
 
 import (
+	_ "embed"
 	"fmt"
 	"time"
+
 	"weft/internal/store"
 )
+
+const demoImageID = "$demo-image"
+
+//go:embed demo-weave.png
+var demoImage []byte
 
 func SeedDemo(db *store.Store) error {
 	rooms := []store.Room{{ID: "!studio:weft.local", Name: "The studio", Topic: "A place for ideas, work in progress, and the occasional tangent.", Encrypted: true, Unread: 3}, {ID: "!matrix:weft.local", Name: "Matrix development", Topic: "Building things that bring people together.", Unread: 12}, {ID: "!garden:weft.local", Name: "The garden", Topic: "Small things, growing slowly.", Encrypted: true}, {ID: "!alex:weft.local", Name: "Alex", Encrypted: true}}
@@ -31,5 +38,9 @@ func SeedDemo(db *store.Store) error {
 	}
 	_ = db.Relation("$reaction1", rooms[0].ID, "$demo-3", "@alex:weft.local", "reaction", "🧶", now.UnixMilli())
 	_ = db.Relation("$reaction2", rooms[0].ID, "$demo-3", "@sam:weft.local", "reaction", "🧶", now.UnixMilli())
-	return nil
+	return db.SaveMessage(store.Message{
+		ID: demoImageID, RoomID: rooms[0].ID, Sender: "@sam:weft.local",
+		Body: "woven-swatch.png", Kind: "m.image", TS: now.Add(45 * time.Minute).UnixMilli(),
+		Encrypted: true,
+	}, false)
 }

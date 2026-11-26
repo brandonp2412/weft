@@ -6,12 +6,13 @@ output=docs/screenshots
 mkdir -p "$output"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+printf 'image_previews = true\n' > "$work/settings.toml"
 
 # Use a private display and explicit preferences, even when run locally.
 # Set COLORTERM inside xterm: xterm can override the inherited value.
 TZ=UTC LC_ALL=C.UTF-8 xvfb-run -a -s '-screen 0 1600x1000x24' bash -euo pipefail -c '
     work=$1
-    xterm -tn xterm-256color -T "hidden weft preview" -geometry 110x36+0+0 -fa "DejaVu Sans Mono" -fs 13 \
+    xterm -ti vt340 -tn xterm-256color -T "hidden weft preview" -geometry 110x36+0+0 -fa "DejaVu Sans Mono" -fs 13 \
         -b 16 -bg "#171923" -fg "#e5e7eb" +sb \
         -e env -u NO_COLOR -u CLICOLOR_FORCE COLORTERM=truecolor TMPDIR="$work" "$PWD/bin/weft" --config "$work/settings.toml" --demo &
     terminal=$!
