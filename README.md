@@ -19,7 +19,7 @@ See the [guide](docs/guide.md) for login options, configuration, and commands.
 
 ## Screenshots
 
-[Room picker](docs/screenshots/room-picker.png). Run `make screenshots` on Linux to refresh both previews. It uses Xvfb, xauth, xterm, xdotool, xwd, FFmpeg, and DejaVu Sans Mono. The Screenshots workflow also uploads fresh PNGs on pushes and pull requests.
+[Room picker](docs/screenshots/room-picker.png). Run `make screenshots` on Linux to refresh both previews. It uses Xvfb, xauth, xterm, xdotool, xwd, FFmpeg, Python 3, and DejaVu Sans Mono. The Screenshots workflow also uploads fresh PNGs on pushes and pull requests.
 
 ## License
 
