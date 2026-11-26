@@ -271,9 +271,43 @@ func (m *Model) updateVi(key string) (tea.Cmd, bool) {
 		m.input.SetValue("/")
 		m.input.CursorEnd()
 		return cmd, true
+	case "f":
+		m.openPrompt("rooms")
+		return textinput.Blink, true
 	case "/":
 		m.openPrompt("search")
 		return textinput.Blink, true
+	case "H", "M", "L":
+		top, end := m.visibleTimeline()
+		row := top
+		switch key {
+		case "M":
+			row = top + (end-top)/2
+		case "L":
+			row = end - 1
+		}
+		for _, msg := range m.messages {
+			span := m.spans[msg.ID]
+			if span[0] <= row && row < span[1] {
+				m.selected = msg.ID
+				m.renderTimeline()
+				break
+			}
+		}
+		return nil, true
+	case "ctrl+u", "ctrl+d":
+		delta := max(1, m.timelineHeight()/2) * count
+		if key == "ctrl+u" {
+			m.scroll += delta
+			m.clampScroll()
+			if m.scroll >= max(0, len(m.rendered)-m.timelineHeight()-5) {
+				return m.history(), true
+			}
+		} else {
+			m.scroll -= delta
+			m.clampScroll()
+		}
+		return nil, true
 	case "u":
 		m.viRestore(false)
 		return nil, true

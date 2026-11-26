@@ -5,5 +5,7 @@
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
 session.json
 weft.log
+weft.lock

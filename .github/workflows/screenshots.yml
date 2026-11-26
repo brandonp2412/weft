@@ -1,0 +1,29 @@
+name: Screenshots
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install screenshot tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth xterm xdotool x11-apps ffmpeg fonts-dejavu-mono fonts-noto-color-emoji
+      - run: make screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: docs/screenshots/*.png
+          if-no-files-found: error

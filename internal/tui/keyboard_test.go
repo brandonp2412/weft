@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"weft/internal/config"
+	"weft/internal/store"
 )
 
 func TestViKeyboard(t *testing.T) {
@@ -95,6 +96,33 @@ func viKeys(m Model, keys ...string) Model {
 	}
 	return m
 }
+func TestViSelectsVisibleMessages(t *testing.T) {
+	m := viModel(t)
+	m.messages = []store.Message{
+		{ID: "above", Body: "Above"},
+		{ID: "top", Body: "Top"},
+		{ID: "middle", Body: "Middle\nSecond line"},
+		{ID: "bottom", Body: "Bottom"},
+		{ID: "below", Body: "Below"},
+	}
+	m.input.SetValue("draft")
+	m.height = 20
+	m.renderTimeline()
+	top := m.spans["top"][0] + 1
+	m.scroll = len(m.rendered) - m.timelineHeight() - top
+	scroll := m.scroll
+	for _, tc := range []struct{ key, id string }{{"H", "top"}, {"M", "middle"}, {"L", "bottom"}} {
+		m = viKeys(m, tc.key)
+		if m.selected != tc.id || m.scroll != scroll || m.input.Value() != "draft" {
+			t.Fatalf("%s: selected %q, scroll %d, draft %q", tc.key, m.selected, m.scroll, m.input.Value())
+		}
+	}
+	m = viKeys(m, "A", "H", "M", "L")
+	if m.input.Value() != "draftHML" || m.selected != "bottom" {
+		t.Fatalf("insert mode: selected %q, draft %q", m.selected, m.input.Value())
+	}
+}
+
 func TestViDraftNavigation(t *testing.T) {
 	m := viModel(t)
 	m.input.SetValue("first line\nsecond line\n漢字 third")
