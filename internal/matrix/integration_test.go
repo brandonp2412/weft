@@ -252,6 +252,12 @@ func TestMatrixLifecycle(t *testing.T) {
 		t.Fatal("recovery:", e)
 	}
 	eventually(t, "restored old encrypted history", func() bool { m, e := fresh.Store.Message(first.ID); return e == nil && m.Body == "hello edited world" })
+	for _, name := range []id.Secret{id.SecretXSMaster, id.SecretXSSelfSigning, id.SecretXSUserSigning, id.SecretMegolmBackupV1} {
+		value, err := fresh.Crypto.Machine().CryptoStore.GetSecret(ctx, name)
+		if err != nil || value == "" {
+			t.Fatalf("recovery did not populate SDK secret storage for %s: %v", name, err)
+		}
+	}
 	t.Log("cross-signing recovery and server key-backup restoration passed")
 	// SAS verification drives the actual SDK handshake on two devices.
 	txn, e := a.StartVerification(ctx, a.Client.UserID)
@@ -307,6 +313,15 @@ func TestMatrixLifecycle(t *testing.T) {
 		}
 	})
 	t.Log("interactive SAS verification passed")
+	// The original test device has no locally persisted backup secret.
+	// Request it from the verified, recovered device over real Matrix sync.
+	if err := a.Crypto.Machine().GetOrRequestSecret(ctx, id.SecretMegolmBackupV1,
+		func(value string) (bool, error) {
+			return value == base64.RawStdEncoding.EncodeToString(backupKey.Bytes()), nil
+		}, 15*time.Second); err != nil {
+		t.Fatal("verified device secret sharing:", err)
+	}
+	t.Log("verified device encrypted secret sharing passed")
 	// Restart the sender with its original token, device ID and crypto database.
 	device := a.Client.DeviceID
 	fingerprint := a.Crypto.Machine().Fingerprint()

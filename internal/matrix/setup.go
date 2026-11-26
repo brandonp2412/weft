@@ -44,6 +44,9 @@ func (b *Backend) SetupKeys(ctx context.Context, password string) (string, error
 	if e = mach.VerifyWithRecoveryKey(ctx, recovery); e != nil {
 		return recovery, e
 	}
+	if e = persistCrossSigningForVerification(ctx, mach); e != nil {
+		return recovery, e
+	}
 	keyID, metadata, e := mach.SSSS.GetDefaultKeyData(ctx)
 	if e != nil {
 		return recovery, e
@@ -67,6 +70,9 @@ func (b *Backend) SetupKeys(ctx context.Context, password string) (string, error
 	}
 	if e = mach.SSSS.SetEncryptedAccountData(ctx, event.Type{Type: string(id.SecretMegolmBackupV1), Class: event.AccountDataEventType}, []byte(base64.RawStdEncoding.EncodeToString(bk.Bytes())), key); e != nil {
 		return recovery, fmt.Errorf("store backup secret: %w", e)
+	}
+	if e = mach.CryptoStore.PutSecret(ctx, id.SecretMegolmBackupV1, base64.RawStdEncoding.EncodeToString(bk.Bytes())); e != nil {
+		return recovery, e
 	}
 	return recovery, b.backup(ctx)
 }

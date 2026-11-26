@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"maunium.net/go/mautrix/crypto"
 	"maunium.net/go/mautrix/crypto/backup"
 	"maunium.net/go/mautrix/crypto/ssss"
 	"maunium.net/go/mautrix/crypto/verificationhelper"
@@ -90,6 +91,9 @@ func (b *Backend) Recover(ctx context.Context, secret string, passphrase bool) e
 	if e = mach.SignOwnMasterKey(ctx); e != nil {
 		return e
 	}
+	if e = persistCrossSigningForVerification(ctx, mach); e != nil {
+		return fmt.Errorf("save verified cross-signing state: %w", e)
+	}
 	secretType := event.Type{Type: "m.megolm_backup.v1", Class: event.AccountDataEventType}
 	data, e := mach.SSSS.GetDecryptedAccountData(ctx, secretType, key)
 	if e != nil {
@@ -107,6 +111,29 @@ func (b *Backend) Recover(ctx context.Context, secret string, passphrase bool) e
 	if e != nil {
 		return fmt.Errorf("device verified, but backup restoration failed: %w", e)
 	}
+	if e = mach.CryptoStore.PutSecret(ctx, id.SecretMegolmBackupV1, base64.RawStdEncoding.EncodeToString(raw)); e != nil {
+		return fmt.Errorf("save verified backup state: %w", e)
+	}
 	b.notice("Device verified; restored key backup "+string(version), false)
 	return b.retryDecrypt(ctx)
+}
+
+// persistCrossSigningForVerification supplies the SDK's normal encrypted
+// secret store. The SDK itself handles requests and checks device trust;
+// Weft never forwards secrets through a custom or unverified path.
+func persistCrossSigningForVerification(ctx context.Context, mach *crypto.OlmMachine) error {
+	if mach.CrossSigningKeys == nil {
+		return fmt.Errorf("cross-signing keys not loaded")
+	}
+	keys := mach.ExportCrossSigningKeys()
+	for name, seed := range map[id.Secret][]byte{
+		id.SecretXSMaster:      keys.MasterKey,
+		id.SecretXSSelfSigning: keys.SelfSigningKey,
+		id.SecretXSUserSigning: keys.UserSigningKey,
+	} {
+		if err := mach.CryptoStore.PutSecret(ctx, name, base64.RawStdEncoding.EncodeToString(seed)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
