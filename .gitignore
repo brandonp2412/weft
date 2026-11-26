@@ -1,6 +1,5 @@
 /bin/
 /coverage.out
-/graphify-out/
 *.test
 *.db
 *.db-wal
