@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example, 0.1.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Validate release inputs
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::Run this workflow from the default branch."
+            exit 1
+          fi
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Use a version such as 0.1.0."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build release archive
+        env:
+          CGO_ENABLED: "1"
+        run: make dist VERSION="$VERSION"
+      - name: Tag and publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive="bin/weft-$VERSION-$(go env GOOS)-$(go env GOARCH).tar.gz"
+          test -s "$archive"
+
+          tag="v$VERSION"
+          ref="refs/tags/$tag"
+          existing_tag=$(git ls-remote --refs origin "$ref")
+          if [[ -z "$existing_tag" ]]; then
+            git push origin "$GITHUB_SHA:$ref"
+          elif [[ "$existing_tag" != "$GITHUB_SHA"$'\t'"$ref" ]]; then
+            echo "::error::Tag $tag already exists on another revision."
+            exit 1
+          fi
+
+          gh release create "$tag" "$archive" --verify-tag --title "$tag" --generate-notes
