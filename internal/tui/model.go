@@ -234,7 +234,9 @@ func (m *Model) reload() {
 	m.messages = messages
 	m.names = map[string]string{}
 	for _, msg := range messages {
-		m.names[msg.Sender] = m.db.MemberName(m.current, msg.Sender)
+		if _, seen := m.names[msg.Sender]; !seen {
+			m.names[msg.Sender] = m.db.MemberName(m.current, msg.Sender)
+		}
 	}
 	m.renderTimelineAtAnchor()
 }

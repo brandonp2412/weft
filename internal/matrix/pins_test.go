@@ -53,6 +53,16 @@ func TestSyncRoomFavourites(t *testing.T) {
 	if err != nil || rooms[0].ID != "!recent:test" || rooms[1].Pinned {
 		t.Fatalf("unfavourite not applied: %+v %v", rooms, err)
 	}
+	process(`[{"type":"m.tag","content":{"tags":{"m.favourite":{},"m.lowpriority":{}}}}]`, "next")
+	rooms, err = db.Rooms()
+	if err != nil || len(rooms) != 2 || rooms[1].ID != "!tyla:test" || !rooms[1].Pinned {
+		t.Fatalf("low-priority favourite should sort last: %+v %v", rooms, err)
+	}
+	process(`[{"type":"m.tag","content":{"tags":{"m.favourite":{}}}}]`, "next")
+	rooms, err = db.Rooms()
+	if err != nil || len(rooms) != 2 || rooms[0].ID != "!tyla:test" {
+		t.Fatalf("removing low-priority tag should restore ordering: %+v %v", rooms, err)
+	}
 }
 
 func TestPinRoomUsesMatrixTagEndpoint(t *testing.T) {

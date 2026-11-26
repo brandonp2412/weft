@@ -64,7 +64,7 @@ func TestSyncNotifications(t *testing.T) {
 	low := `[{"type":"m.tag","content":{"tags":{"m.lowpriority":{}}}}]`
 	clearTags := `[{"type":"m.tag","content":{"tags":{}}}]`
 	mute := `[{"type":"m.push_rules","content":{"global":{"override":[{"rule_id":"!room:test","enabled":true,"actions":["dont_notify"],"conditions":[{"kind":"event_match","key":"room_id","pattern":"!room:test"}]}]}}}]`
-	unmute := `[{"type":"m.push_rules","content":{"global":{"override":[]}}}]`
+	unmute := `[{"type":"m.push_rules","content":{"global":{"override":[{"rule_id":"notify","enabled":true,"actions":["notify"],"conditions":[]}]}}}]`
 	process("["+msg("$low", "@other:test", `{"msgtype":"m.text","body":"low priority"}`)+"]", low, "[]")
 	process("["+msg("$muted", "@other:test", `{"msgtype":"m.text","body":"muted"}`)+"]", clearTags, mute)
 	process("[" + msg("$still-muted", "@other:test", `{"msgtype":"m.text","body":"still muted"}`) + "]")
@@ -82,5 +82,43 @@ func TestSyncNotifications(t *testing.T) {
 	b.handleEvent(context.Background(), historical)
 	if len(b.Notifications) != 0 {
 		t.Fatal("history notification")
+	}
+}
+
+func TestInstagramMediaPushRules(t *testing.T) {
+	db, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	client, err := mautrix.NewClient("https://example.org", "@me:test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Backend{ctx: context.Background(), Client: client, Store: db, synced: make(chan struct{}), Notifications: make(chan store.Message, 10)}
+	ds := mautrix.NewDefaultSyncer()
+	ds.OnEvent(b.handleEvent)
+	s := &syncer{DefaultSyncer: ds, b: b}
+	process := func(events, account string) {
+		t.Helper()
+		var res mautrix.RespSync
+		if err := json.Unmarshal([]byte(`{"next_batch":"next","account_data":{"events":`+account+`},"rooms":{"join":{"!room:test":{"summary":{"m.joined_member_count":3},"timeline":{"events":`+events+`}}}}}`), &res); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ProcessResponse(context.Background(), &res, "previous"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rules := `[{"type":"m.push_rules","content":{"global":{"override":[{"rule_id":"self","enabled":true,"actions":[],"conditions":[{"kind":"event_match","key":"sender","pattern":"@instagram_self:test"}]},{"rule_id":"media","enabled":true,"actions":[],"conditions":[{"kind":"event_match","key":"sender","pattern":"@instagram_*:test"},{"kind":"event_match","key":"content.presley_media","pattern":"media"}]},{"rule_id":"dm","enabled":true,"actions":["notify"],"conditions":[{"kind":"event_match","key":"room_id","pattern":"!room:test"},{"kind":"room_member_count","is":"<=3"}]},{"rule_id":"silence","enabled":true,"actions":[],"conditions":[]}]}}}]`
+	process("[]", rules)
+	process(`[{"event_id":"$reel","sender":"@instagram_peer:test","type":"m.room.encrypted","origin_server_ts":123,"content":{"algorithm":"m.megolm.v1.aes-sha2","ciphertext":"abc","presley_media":"media"}},{"event_id":"$text","sender":"@instagram_peer:test","type":"m.room.encrypted","origin_server_ts":124,"content":{"algorithm":"m.megolm.v1.aes-sha2","ciphertext":"abc"}},{"event_id":"$self","sender":"@instagram_self:test","type":"m.room.encrypted","origin_server_ts":125,"content":{"algorithm":"m.megolm.v1.aes-sha2","ciphertext":"abc"}}]`, "[]")
+	if len(b.Notifications) != 1 {
+		t.Fatalf("expected only text notification; got %d", len(b.Notifications))
+	}
+	if got := <-b.Notifications; got.ID != "$text" {
+		t.Fatalf("unexpected alert: %s", got.ID)
+	}
+	if _, err := db.Message("$reel"); err != nil {
+		t.Fatalf("silent reel not retained: %v", err)
 	}
 }

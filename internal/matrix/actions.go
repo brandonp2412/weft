@@ -318,7 +318,7 @@ func (b *Backend) SyncRoomTags(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Replace the cache atomically so favourites removed by another client while
+	// Replace the cache atomically so tags removed by another client while
 	// Weft was closed are cleared even when no m.tag event is returned.
 	tx, err := b.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -326,6 +326,9 @@ func (b *Backend) SyncRoomTags(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, "DELETE FROM room_pins"); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM room_low_priority"); err != nil {
 		return err
 	}
 	for room, data := range res.Rooms.Join {
@@ -337,14 +340,23 @@ func (b *Backend) SyncRoomTags(ctx context.Context) error {
 			if err = json.Unmarshal(evt.Content.VeryRaw, &content); err != nil {
 				return err
 			}
-			if _, ok := content.Tags[event.RoomTagFavourite]; !ok {
+			_, pinned := content.Tags[event.RoomTagFavourite]
+			_, lowPriority := content.Tags[event.RoomTagLowPriority]
+			if !pinned && !lowPriority {
 				continue
 			}
 			if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO rooms(id) VALUES(?)", room.String()); err != nil {
 				return err
 			}
-			if _, err = tx.ExecContext(ctx, "INSERT INTO room_pins(room_id) VALUES(?)", room.String()); err != nil {
-				return err
+			if pinned {
+				if _, err = tx.ExecContext(ctx, "INSERT INTO room_pins(room_id) VALUES(?)", room.String()); err != nil {
+					return err
+				}
+			}
+			if lowPriority {
+				if _, err = tx.ExecContext(ctx, "INSERT INTO room_low_priority(room_id) VALUES(?)", room.String()); err != nil {
+					return err
+				}
 			}
 		}
 	}

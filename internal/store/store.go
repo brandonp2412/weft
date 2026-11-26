@@ -73,6 +73,7 @@ func Open(dir string) (*Store, error) {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY,value TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS rooms(id TEXT PRIMARY KEY,name TEXT NOT NULL DEFAULT '',topic TEXT NOT NULL DEFAULT '',membership TEXT NOT NULL DEFAULT 'join',encrypted INTEGER NOT NULL DEFAULT 0,unread INTEGER NOT NULL DEFAULT 0,last_ts INTEGER NOT NULL DEFAULT 0,prev_batch TEXT NOT NULL DEFAULT '',exhausted INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE IF NOT EXISTS room_pins(room_id TEXT PRIMARY KEY REFERENCES rooms(id));
+ CREATE TABLE IF NOT EXISTS room_low_priority(room_id TEXT PRIMARY KEY REFERENCES rooms(id));
  CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,room_id TEXT NOT NULL,sender TEXT NOT NULL,body TEXT NOT NULL,kind TEXT NOT NULL,ts INTEGER NOT NULL,reply_to TEXT NOT NULL DEFAULT '',thread_root TEXT NOT NULL DEFAULT '',edited INTEGER NOT NULL DEFAULT 0,redacted INTEGER NOT NULL DEFAULT 0,encrypted INTEGER NOT NULL DEFAULT 0,raw BLOB);
  CREATE INDEX IF NOT EXISTS messages_room_ts ON messages(room_id,ts,id);
  CREATE TABLE IF NOT EXISTS relations(id TEXT PRIMARY KEY,room_id TEXT NOT NULL,target TEXT NOT NULL,sender TEXT NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,ts INTEGER NOT NULL,redacted INTEGER NOT NULL DEFAULT 0);
@@ -145,8 +146,20 @@ func (s *Store) PinRoom(roomID string, pinned bool) error {
 	}
 	return err
 }
+func (s *Store) SetRoomLowPriority(roomID string, lowPriority bool) error {
+	if lowPriority {
+		_, err := s.DB.Exec("INSERT OR IGNORE INTO room_low_priority(room_id) SELECT id FROM rooms WHERE id=?", roomID)
+		return err
+	}
+	_, err := s.DB.Exec("DELETE FROM room_low_priority WHERE room_id=?", roomID)
+	return err
+}
+
 func (s *Store) Rooms() ([]Room, error) {
-	rows, e := s.DB.Query("SELECT id,name,topic,membership,encrypted,unread,last_ts,prev_batch,exhausted,EXISTS(SELECT 1 FROM room_pins WHERE room_id=rooms.id) FROM rooms WHERE membership IN ('join','invite') ORDER BY EXISTS(SELECT 1 FROM room_pins WHERE room_id=rooms.id) DESC,last_ts DESC,name,id")
+	rows, e := s.DB.Query(`SELECT id,name,topic,membership,encrypted,unread,last_ts,prev_batch,exhausted,
+		EXISTS(SELECT 1 FROM room_pins WHERE room_id=rooms.id) AS pinned
+		FROM rooms WHERE membership IN ('join','invite')
+		ORDER BY EXISTS(SELECT 1 FROM room_low_priority WHERE room_id=rooms.id),pinned DESC,last_ts DESC,name,id`)
 	if e != nil {
 		return nil, e
 	}

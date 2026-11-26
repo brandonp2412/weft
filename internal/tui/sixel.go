@@ -19,7 +19,7 @@ import (
 
 // Run keeps terminal image painting synchronized with Bubble Tea's text frames.
 func Run(ctx context.Context, m Model) (tea.Model, error) {
-	options := []tea.ProgramOption{tea.WithContext(ctx)}
+	options := []tea.ProgramOption{tea.WithContext(ctx), tea.WithFPS(120)}
 	if m.settings.ImagePreviews {
 		m.graphics = &sixelOutput{File: os.Stdout}
 		options = append(options, tea.WithOutput(m.graphics))

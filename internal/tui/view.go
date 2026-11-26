@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,9 +20,23 @@ var (
 	bg          = lipgloss.Color("#101A1B")
 	panel       = lipgloss.Color("#152223")
 	line        = lipgloss.Color("#2A3D3D")
+	codeBG      = lipgloss.Color("#203031")
+	quoteColor  = lipgloss.Color("#A6B8B3")
 	bodyStyle   = lipgloss.NewStyle().Foreground(ink)
 	dimStyle    = lipgloss.NewStyle().Foreground(muted)
 	accentStyle = lipgloss.NewStyle().Foreground(teal)
+	quoteStyle  = lipgloss.NewStyle().Foreground(quoteColor).Italic(true)
+	codeStyle   = lipgloss.NewStyle().Foreground(teal).Background(codeBG)
+	linkStyle   = lipgloss.NewStyle().Foreground(teal).Underline(true)
+)
+
+var (
+	linkPattern     = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	urlPattern      = regexp.MustCompile(`https?://[^\s<>()]+`)
+	codePattern     = regexp.MustCompile("`([^`]+)`")
+	strongPattern   = regexp.MustCompile(`\*\*([^*]+)\*\*|__([^_]+)__`)
+	emphasisPattern = regexp.MustCompile(`\*([^*]+)\*|_([^_]+)_`)
+	strikePattern   = regexp.MustCompile(`~~([^~]+)~~`)
 )
 
 func clip(s string, width int) string { return ansi.Truncate(s, max(0, width), "…") }
@@ -90,7 +105,7 @@ func (m *Model) renderTimeline() {
 					break
 				}
 			}
-			m.rendered = append(m.rendered, dimStyle.Render(clip("    ↳ "+label, width+4)))
+			m.rendered = append(m.rendered, accentStyle.Render("    ↳ ")+quoteStyle.Render(clip(label, width)))
 		}
 		text := clean(msg.Body)
 		if msg.Kind == "m.emote" {
@@ -103,10 +118,7 @@ func (m *Model) renderTimeline() {
 		if msg.Redacted {
 			text = "[message deleted]"
 		}
-		wrapped := ansi.Wrap(text, width, "")
-		for _, l := range strings.Split(wrapped, "\n") {
-			m.rendered = append(m.rendered, bodyStyle.Render("    "+l))
-		}
+		m.rendered = append(m.rendered, renderMessageBody(text, width)...)
 		if m.settings.ImagePreviews && !msg.Redacted && msg.Kind == "m.image" {
 			thumb := m.previews[msg.ID]
 			if tile := m.imageTile(thumb, width, min(17, max(1, m.height-13))); tile.image != nil {
@@ -122,6 +134,74 @@ func (m *Model) renderTimeline() {
 		m.rendered = append(m.rendered, "")
 		m.spans[msg.ID] = [2]int{start, len(m.rendered)}
 	}
+}
+
+func renderMessageBody(text string, width int) []string {
+	var rows []string
+	inCode := false
+	for _, raw := range strings.Split(clean(text), "\n") {
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inCode = !inCode
+			continue
+		}
+		if inCode {
+			rows = appendWrapped(rows, codeStyle, "    "+raw, width)
+			continue
+		}
+		quote := strings.HasPrefix(trimmed, ">")
+		if quote {
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, ">"))
+			for _, row := range strings.Split(ansi.Wrap(formatInline(trimmed), max(1, width-2), "      "), "\n") {
+				rows = append(rows, quoteStyle.Render("    │ "+row))
+			}
+			continue
+		}
+		rows = appendWrapped(rows, bodyStyle, "    "+formatInline(raw), width)
+	}
+	return rows
+}
+
+func appendWrapped(rows []string, style lipgloss.Style, text string, width int) []string {
+	return append(rows, wrapStyled(style.Render(text), width)...)
+}
+
+func wrapStyled(text string, width int) []string {
+	return strings.Split(ansi.Wrap(text, max(1, width), "    "), "\n")
+}
+
+func formatInline(text string) string {
+	text = linkPattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := linkPattern.FindStringSubmatch(match)
+		return linkStyle.Render(parts[1])
+	})
+	text = urlPattern.ReplaceAllStringFunc(text, func(match string) string {
+		return linkStyle.Render(match)
+	})
+	text = codePattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := codePattern.FindStringSubmatch(match)
+		return codeStyle.Render(parts[1])
+	})
+	text = strongPattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := strongPattern.FindStringSubmatch(match)
+		content := parts[1]
+		if content == "" {
+			content = parts[2]
+		}
+		return lipgloss.NewStyle().Foreground(ink).Bold(true).Render(content)
+	})
+	text = emphasisPattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := emphasisPattern.FindStringSubmatch(match)
+		content := parts[1]
+		if content == "" {
+			content = parts[2]
+		}
+		return lipgloss.NewStyle().Foreground(ink).Italic(true).Render(content)
+	})
+	text = strikePattern.ReplaceAllStringFunc(text, func(match string) string {
+		return lipgloss.NewStyle().Foreground(muted).Strikethrough(true).Render(strikePattern.FindStringSubmatch(match)[1])
+	})
+	return text
 }
 func (m Model) sidebar() string {
 	w := m.sidebarWidth()
@@ -377,7 +457,7 @@ func (m Model) modalView() string {
 		title = "weft · keyboard & commands"
 		text := helpText
 		if m.settings.KeyboardMode == "vi" {
-			text = "Vi: empty draft j/k chats · gg/G first/last chat\nDraft: h/j/k/l move · w/b/e words · 0/^/$ line · gg/G draft ends\nEnter/i/a/I/A insert · q exit (y/n) · ZZ quit · o/O open line · Esc normal · counts: 3j, 2dd\nd/c/y + motion · dd/cc/yy line · D/C to end · x delete\np/P paste · u undo · Ctrl+R redo · : command (empty draft) · / search\n\n" + text
+			text = "Vi: empty draft j/k chats · gg/G first/last chat\nH/M/L select message at top/middle/bottom of view\nDraft: h/j/k/l move · w/b/e words · 0/^/$ line · gg/G draft ends\nEnter/i/a/I/A insert · q exit (y/n) · ZZ quit · o/O open line · Esc normal · counts: 3j, 2dd\nd/c/y + motion · dd/cc/yy line · D/C to end · x delete\np/P paste · u undo · Ctrl+R redo · : command (empty draft) · / search\n\n" + text
 		}
 		lines = strings.Split(text, "\n")
 		footer = "Enter or Esc returns to chat"

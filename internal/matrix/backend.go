@@ -18,6 +18,7 @@ import (
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
+	"maunium.net/go/mautrix/pushrules"
 	"weft/internal/config"
 	"weft/internal/store"
 )
@@ -56,7 +57,8 @@ type Backend struct {
 	typing                   map[string][]string
 	logFile                  *os.File
 	lowPriority              map[id.RoomID]bool
-	mutedRooms               map[id.RoomID]bool
+	alertRules               *pushrules.PushRuleset
+	alertMemberCounts        map[id.RoomID]int
 	alertSettingsUnavailable bool
 }
 
@@ -261,7 +263,7 @@ func (s *syncer) ProcessResponse(ctx context.Context, res *mautrix.RespSync, sin
 	}
 	b.updateAlertSettings(res, since == "")
 	for _, evt := range incoming {
-		if b.alertSettingsUnavailable || b.lowPriority[evt.RoomID] || b.mutedRooms[evt.RoomID] {
+		if b.alertSettingsUnavailable || b.lowPriority[evt.RoomID] || !b.eventAllowsAlert(ctx, evt) {
 			continue
 		}
 		if msg, err := b.Store.Message(evt.ID.String()); err == nil && !msg.Redacted {
@@ -330,9 +332,12 @@ func (b *Backend) handleEvent(ctx context.Context, evt *event.Event) {
 	}
 	switch evt.Type {
 	case event.AccountDataRoomTags:
-		_, pinned := evt.Content.AsTag().Tags[event.RoomTagFavourite]
+		tags := evt.Content.AsTag().Tags
+		_, pinned := tags[event.RoomTagFavourite]
+		_, lowPriority := tags[event.RoomTagLowPriority]
 		b.record(b.Store.EnsureRoom(evt.RoomID.String()))
 		b.record(b.Store.PinRoom(evt.RoomID.String(), pinned))
+		b.record(b.Store.SetRoomLowPriority(evt.RoomID.String(), lowPriority))
 		b.Changed()
 		return
 	case event.EphemeralEventTyping:
@@ -378,7 +383,7 @@ func (b *Backend) handleEvent(ctx context.Context, evt *event.Event) {
 		c.RemoveReplyFallback()
 		body = c.Body
 		if body == "" && c.FormattedBody != "" {
-			body = format.HTMLToText(c.FormattedBody)
+			body = format.HTMLToMarkdown(c.FormattedBody)
 		}
 		kind := string(c.MsgType)
 		if evt.Type == event.EventSticker {
