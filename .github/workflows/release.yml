@@ -34,6 +34,8 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@v4
+      - name: Validate handwritten release notes
+        run: python3 scripts/release_notes.py "release-notes/$VERSION.txt"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -58,4 +60,4 @@ jobs:
             exit 1
           fi
 
-          gh release create "$tag" "$archive" --verify-tag --title "$tag" --generate-notes
+          gh release create "$tag" "$archive" --verify-tag --title "$tag" --notes-file "release-notes/$VERSION.txt"
