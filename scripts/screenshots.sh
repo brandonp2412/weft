@@ -26,24 +26,24 @@ TZ=UTC LC_ALL=C.UTF-8 xvfb-run -a -s '-screen 0 1600x1000x24' bash -euo pipefail
         ffmpeg -nostdin -loglevel error -y -i "$work/window.xwd" -frames:v 1 -threads 1 -update 1 "$work/$1.png"
     }
 
-    capture conversation
+    capture inline-image
     xdotool key --clearmodifiers ctrl+k
     capture room-picker
-    if cmp -s "$work/conversation.png" "$work/room-picker.png"; then
+    if cmp -s "$work/inline-image.png" "$work/room-picker.png"; then
         echo "The room picker did not open" >&2
         exit 1
     fi
     xdotool key Escape ctrl+q
 ' preview "$work"
 
-# Reject monochrome or reduced-palette screenshots before replacing the previews.
+# Check the theme colors and woven swatch before replacing the published PNGs.
 python3 - "$work" <<'PY'
 import pathlib
 import subprocess
 import sys
 
 for name, colors in {
-    "conversation": ("78DBC2", "EBCB8B", "152223"),
+    "inline-image": ("78DBC2", "EBCB8B", "152223"),
     "room-picker": ("78DBC2", "152223"),
 }.items():
     path = pathlib.Path(sys.argv[1]) / f"{name}.png"
@@ -51,10 +51,16 @@ for name, colors in {
         "ffmpeg", "-v", "error", "-i", str(path),
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "1", "-",
     ])
-    pixels = set(zip(rgb[::3], rgb[1::3], rgb[2::3]))
+    pixels = list(zip(rgb[::3], rgb[1::3], rgb[2::3]))
+    palette = set(pixels)
     for color in colors:
-        if tuple(bytes.fromhex(color)) not in pixels:
+        if tuple(bytes.fromhex(color)) not in palette:
             sys.exit(f"{name}: missing expected color #{color}")
+    if name == "inline-image":
+        # Orange threads supply thousands of warm pixels across many shades.
+        threads = [(r, g, b) for r, g, b in pixels if r > 110 and r > g + 20 and g > b + 12]
+        if len(threads) < 2000 or len(set(threads)) < 24:
+            sys.exit(f"{name}: woven swatch is missing from the capture")
 PY
 
-mv "$work/conversation.png" "$work/room-picker.png" "$output/"
+mv "$work/inline-image.png" "$work/room-picker.png" "$output/"
