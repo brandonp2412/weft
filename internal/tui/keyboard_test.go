@@ -123,6 +123,31 @@ func TestViSelectsVisibleMessages(t *testing.T) {
 	}
 }
 
+func TestViScrollsChatWithUD(t *testing.T) {
+	m := viModel(t)
+	m.height = 20
+	m.rendered = make([]string, 100)
+	halfPage := max(1, m.timelineHeight()/2)
+
+	m = viKeys(m, "2", "u")
+	if m.scroll != 2*halfPage {
+		t.Fatalf("2u scrolled %d lines, want %d", m.scroll, 2*halfPage)
+	}
+	m = viKeys(m, "d", "d")
+	if m.scroll != 0 || m.viPending != "" {
+		t.Fatalf("dd left scroll at %d with pending key %q", m.scroll, m.viPending)
+	}
+
+	m = viKeys(m, "i", "x", "esc", "x", "u")
+	if m.input.Value() != "x" || m.scroll != 0 {
+		t.Fatalf("undo after deleting draft: got draft %q and scroll %d", m.input.Value(), m.scroll)
+	}
+	m = viKeys(m, "A", "u", "d")
+	if m.input.Value() != "xud" || m.scroll != 0 {
+		t.Fatalf("insert mode: got draft %q and scroll %d", m.input.Value(), m.scroll)
+	}
+}
+
 func TestViDraftNavigation(t *testing.T) {
 	m := viModel(t)
 	m.input.SetValue("first line\nsecond line\n漢字 third")

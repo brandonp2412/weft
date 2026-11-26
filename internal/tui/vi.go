@@ -232,6 +232,17 @@ func (m *Model) updateVi(key string) (tea.Cmd, bool) {
 		}
 		return nil, true
 	}
+	if m.input.Value() == "" {
+		switch key {
+		case "u":
+			// Keep undo available after deleting the last text in a draft.
+			if !m.input.Focused() || len(m.viUndo) == 0 {
+				key = "ctrl+u"
+			}
+		case "d":
+			key = "ctrl+d"
+		}
+	}
 	switch key {
 	case "q":
 		m.mode = "quit"

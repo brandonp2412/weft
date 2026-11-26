@@ -30,6 +30,11 @@ type resultMsg struct {
 	history bool
 	details string
 }
+type attachmentResultMsg struct {
+	result     resultMsg
+	attachment *stagedAttachment
+	draft      string
+}
 type Model struct {
 	settings              config.Settings
 	viInsert              bool
@@ -501,6 +506,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(m.lastRead, v.room)
 		}
 		return m, nil
+	case attachmentResultMsg:
+		if v.result.err == nil && m.attachment == v.attachment {
+			m.attachment = nil
+			m.attachmentPreview = nil
+			if m.input.Value() == v.draft && m.mode == "" {
+				m.input.Reset()
+			}
+		}
+		return m.Update(v.result)
 	case resultMsg:
 		if !v.history {
 			m.busy = false
@@ -627,17 +641,20 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if attachment := m.attachment; attachment != nil {
 				room := m.current
+				draft := m.input.Value()
+				caption := strings.TrimSpace(draft)
 				cmd := m.run("Attachment queued", func(ctx context.Context) error {
 					if attachment.path != "" {
-						return m.backend.Upload(ctx, room, attachment.path)
+						return m.backend.UploadWithCaption(ctx, room, attachment.path, caption)
 					}
-					return m.backend.UploadBytes(ctx, room, attachment.name, attachment.mimeType, attachment.data)
+					return m.backend.UploadBytesWithCaption(ctx, room, attachment.name, attachment.mimeType, slices.Clone(attachment.data), caption)
 				})
-				if cmd != nil {
-					m.attachment = nil
-					m.attachmentPreview = nil
+				if cmd == nil {
+					return m, nil
 				}
-				return m, cmd
+				return m, func() tea.Msg {
+					return attachmentResultMsg{result: cmd().(resultMsg), attachment: attachment, draft: draft}
+				}
 			}
 		}
 

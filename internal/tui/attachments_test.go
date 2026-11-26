@@ -2,6 +2,8 @@ package tui
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -9,6 +11,9 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/event"
+	"weft/internal/matrix"
 )
 
 func TestDroppedFile(t *testing.T) {
@@ -26,6 +31,46 @@ func TestDroppedFile(t *testing.T) {
 		if got, ok := droppedFile(input); ok {
 			t.Errorf("unexpected attachment %q for %q", got, input)
 		}
+	}
+}
+
+func TestEnterSendsImageWithCaption(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"content_uri":"mxc://test/image"}`))
+	}))
+	defer server.Close()
+	client, err := mautrix.NewClient(server.URL, "@you:weft.local", "test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := demoModel(t)
+	m.demo = false
+	m.backend = &matrix.Backend{Client: client, Store: m.db}
+	m.switchRoom("!studio:weft.local")
+	m.attachment = &stagedAttachment{name: "clipboard.png", mimeType: "image/png", data: []byte("image bytes")}
+	m.input.SetValue("Here is the screenshot")
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter did not start the upload")
+	}
+	m = updated.(Model)
+	updated, _ = m.Update(cmd())
+	m = updated.(Model)
+	pending, err := m.db.Pending()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected one queued event, got %d (status %q)", len(pending), m.status)
+	}
+	content := pending[0].Content
+	if content.MsgType != event.MsgImage || content.Body != "Here is the screenshot" || content.FileName != "clipboard.png" {
+		t.Fatalf("unexpected queued image: %+v", content)
+	}
+	if m.attachment != nil || m.input.Value() != "" {
+		t.Fatal("successful upload did not clear the composer")
 	}
 }
 

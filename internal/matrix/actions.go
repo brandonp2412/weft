@@ -82,6 +82,10 @@ func (b *Backend) MarkRead(ctx context.Context, room, target string) error {
 const MaxAttachment = 64 << 20
 
 func (b *Backend) Upload(ctx context.Context, room, path string) error {
+	return b.UploadWithCaption(ctx, room, path, "")
+}
+
+func (b *Backend) UploadWithCaption(ctx context.Context, room, path, caption string) error {
 	f, e := os.Open(path)
 	if e != nil {
 		return e
@@ -102,12 +106,17 @@ func (b *Backend) Upload(ctx context.Context, room, path string) error {
 		return e
 	}
 	name := filepath.Base(path)
-	return b.UploadBytes(ctx, room, name, mime.TypeByExtension(filepath.Ext(name)), data)
+	return b.UploadBytesWithCaption(ctx, room, name, mime.TypeByExtension(filepath.Ext(name)), data, caption)
 }
 
 // UploadBytes queues an in-memory attachment using the same upload path as files.
 // It takes ownership of data and may encrypt it in place.
 func (b *Backend) UploadBytes(ctx context.Context, room, name, mimeType string, data []byte) error {
+	return b.UploadBytesWithCaption(ctx, room, name, mimeType, data, "")
+}
+
+// UploadBytesWithCaption queues an attachment with an optional caption and may encrypt data in place.
+func (b *Backend) UploadBytesWithCaption(ctx context.Context, room, name, mimeType string, data []byte, caption string) error {
 	if len(data) > MaxAttachment {
 		return errors.New("attachment exceeds 64 MiB")
 	}
@@ -122,6 +131,9 @@ func (b *Backend) UploadBytes(ctx context.Context, room, name, mimeType string, 
 		mimeType = http.DetectContentType(data)
 	}
 	c := event.MessageEventContent{MsgType: event.MsgFile, Body: name, FileName: name, Info: &event.FileInfo{MimeType: mimeType, Size: len(data)}}
+	if caption != "" {
+		c.Body = caption
+	}
 	if strings.HasPrefix(mimeType, "image/") {
 		c.MsgType = event.MsgImage
 		if dimensions, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {

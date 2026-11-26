@@ -26,7 +26,11 @@ integration:
 	./scripts/integration.sh
 install: build
 	install -d "$(DESTDIR)$(PREFIX)/bin"
+ifeq ($(DESTDIR)|$(PREFIX),|$(HOME)/.local)
+	ln -sfn "$(CURDIR)/bin/weft" "$(PREFIX)/bin/weft$(EXE)"
+else
 	install -m 0755 bin/weft "$(DESTDIR)$(PREFIX)/bin/weft$(EXE)"
+endif
 dist: build
 	install -d "bin/$(DIST_NAME)"
 	install -m 0755 bin/weft "bin/$(DIST_NAME)/weft$(EXE)"
