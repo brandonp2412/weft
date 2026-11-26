@@ -68,7 +68,7 @@ func (b *Backend) SetupKeys(ctx context.Context, password string) (string, error
 	if _, e = b.Client.CreateKeyBackupVersion(ctx, &mautrix.ReqRoomKeysVersionCreate[backup.MegolmAuthData]{Algorithm: id.KeyBackupAlgorithmMegolmBackupV1, AuthData: auth}); e != nil {
 		return recovery, e
 	}
-	if e = mach.SSSS.SetEncryptedAccountData(ctx, event.Type{Type: string(id.SecretMegolmBackupV1), Class: event.AccountDataEventType}, []byte(base64.RawStdEncoding.EncodeToString(bk.Bytes())), key); e != nil {
+	if e = mach.SSSS.SetEncryptedAccountData(ctx, event.Type{Type: string(id.SecretMegolmBackupV1), Class: event.AccountDataEventType}, bk.Bytes(), key); e != nil {
 		return recovery, fmt.Errorf("store backup secret: %w", e)
 	}
 	if e = mach.CryptoStore.PutSecret(ctx, id.SecretMegolmBackupV1, base64.RawStdEncoding.EncodeToString(bk.Bytes())); e != nil {

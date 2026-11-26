@@ -99,19 +99,25 @@ func (b *Backend) Recover(ctx context.Context, secret string, passphrase bool) e
 	if e != nil {
 		return fmt.Errorf("device verified, but could not load backup key: %w", e)
 	}
-	raw, e := base64.RawStdEncoding.DecodeString(strings.TrimRight(string(data), "="))
-	if e != nil {
-		return fmt.Errorf("decode backup key: %w", e)
-	}
-	bk, e := backup.MegolmBackupKeyFromBytes(raw)
+	bk, e := decodeStoredBackupKey(data)
 	if e != nil {
 		return e
+	}
+	// Require the actual private key to match the current backup. A trusted
+	// signature on a backup alone does not prove we can decrypt its sessions.
+	info, e := b.Client.GetKeyBackupLatestVersion(ctx)
+	if e != nil {
+		return fmt.Errorf("load current backup: %w", e)
+	}
+	if info.Algorithm != id.KeyBackupAlgorithmMegolmBackupV1 ||
+		info.AuthData.PublicKey != id.Ed25519(base64.RawStdEncoding.EncodeToString(bk.PublicKey().Bytes())) {
+		return fmt.Errorf("recovered key does not match the current backup")
 	}
 	version, e := mach.DownloadAndStoreLatestKeyBackup(ctx, bk)
 	if e != nil {
 		return fmt.Errorf("device verified, but backup restoration failed: %w", e)
 	}
-	if e = mach.CryptoStore.PutSecret(ctx, id.SecretMegolmBackupV1, base64.RawStdEncoding.EncodeToString(raw)); e != nil {
+	if e = mach.CryptoStore.PutSecret(ctx, id.SecretMegolmBackupV1, base64.RawStdEncoding.EncodeToString(bk.Bytes())); e != nil {
 		return fmt.Errorf("save verified backup state: %w", e)
 	}
 	b.notice("Device verified; restored key backup "+string(version), false)
@@ -136,4 +142,20 @@ func persistCrossSigningForVerification(ctx context.Context, mach *crypto.OlmMac
 		}
 	}
 	return nil
+}
+
+// SSSS.GetDecryptedAccountData already decodes the Matrix base64 payload.
+// Older Weft releases wrote an extra base64 layer; accept that format on read
+// only. New backups always use the standard 32-byte secret.
+func decodeStoredBackupKey(data []byte) (*backup.MegolmBackupKey, error) {
+	if len(data) == 32 {
+		return backup.MegolmBackupKeyFromBytes(data)
+	}
+	if len(data) == 43 || len(data) == 44 {
+		raw, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(string(data), "="))
+		if err == nil && len(raw) == 32 {
+			return backup.MegolmBackupKeyFromBytes(raw)
+		}
+	}
+	return nil, fmt.Errorf("invalid backup key format")
 }

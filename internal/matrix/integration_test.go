@@ -217,7 +217,7 @@ func TestMatrixLifecycle(t *testing.T) {
 		t.Fatal(e)
 	}
 	secretType := event.Type{Type: "m.megolm_backup.v1", Class: event.AccountDataEventType}
-	if e = a.Crypto.Machine().SSSS.SetEncryptedAccountData(ctx, secretType, []byte(base64.RawStdEncoding.EncodeToString(backupKey.Bytes())), ssssKey); e != nil {
+	if e = a.Crypto.Machine().SSSS.SetEncryptedAccountData(ctx, secretType, backupKey.Bytes(), ssssKey); e != nil {
 		t.Fatal(e)
 	}
 	sessions, e := a.Crypto.Machine().CryptoStore.GetGroupSessionsForRoom(ctx, id.RoomID(room)).AsList()
@@ -258,7 +258,17 @@ func TestMatrixLifecycle(t *testing.T) {
 			t.Fatalf("recovery did not populate SDK secret storage for %s: %v", name, err)
 		}
 	}
-	t.Log("cross-signing recovery and server key-backup restoration passed")
+	// Older Weft versions incorrectly double-encoded the backup key.
+	if e = a.Crypto.Machine().SSSS.SetEncryptedAccountData(ctx, secretType, []byte(base64.RawStdEncoding.EncodeToString(backupKey.Bytes())), ssssKey); e != nil {
+		t.Fatal(e)
+	}
+	if e = fresh.Recover(ctx, recovery, false); e != nil {
+		t.Fatal("legacy double-encoded recovery:", e)
+	}
+	if e = a.Crypto.Machine().SSSS.SetEncryptedAccountData(ctx, secretType, backupKey.Bytes(), ssssKey); e != nil {
+		t.Fatal(e)
+	}
+	t.Log("cross-signing recovery and server key-backup restoration passed (standard and legacy formats)")
 	// SAS verification drives the actual SDK handshake on two devices.
 	txn, e := a.StartVerification(ctx, a.Client.UserID)
 	if e != nil {
