@@ -2,7 +2,7 @@
 
 A keyboard-driven Matrix client for the terminal. It supports end-to-end encryption and keeps your conversations available offline.
 
-![Weft showing a demo conversation with an inline image preview](docs/screenshots/inline-image.png)
+![Weft showing a demo conversation with an inline kitten photo](docs/screenshots/kitten-preview.png)
 
 ## Try it
 

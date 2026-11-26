@@ -10,7 +10,9 @@ import (
 
 const demoImageID = "$demo-image"
 
-//go:embed demo-weave.png
+// CC0 photo: https://commons.wikimedia.org/wiki/File:A_curious_kitten_(Pixabay).jpg
+//
+//go:embed demo-kitten.jpg
 var demoImage []byte
 
 func SeedDemo(db *store.Store) error {
@@ -40,7 +42,7 @@ func SeedDemo(db *store.Store) error {
 	_ = db.Relation("$reaction2", rooms[0].ID, "$demo-3", "@sam:weft.local", "reaction", "🧶", now.UnixMilli())
 	return db.SaveMessage(store.Message{
 		ID: demoImageID, RoomID: rooms[0].ID, Sender: "@sam:weft.local",
-		Body: "woven-swatch.png", Kind: "m.image", TS: now.Add(45 * time.Minute).UnixMilli(),
+		Body: "kitten.jpg", Kind: "m.image", TS: now.Add(45 * time.Minute).UnixMilli(),
 		Encrypted: true,
 	}, false)
 }
