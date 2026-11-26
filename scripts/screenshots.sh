@@ -6,7 +6,6 @@ output=docs/screenshots
 mkdir -p "$output"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-printf 'image_previews = true\n' > "$work/settings.toml"
 
 # Use a private display and explicit preferences, even when run locally.
 # Set COLORTERM inside xterm: xterm can override the inherited value.

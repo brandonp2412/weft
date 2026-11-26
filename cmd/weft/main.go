@@ -86,6 +86,7 @@ Press F1 or type /help inside the client for commands.
 		return err
 	}
 	if *demo {
+		settings.ImagePreviews = true
 		temp, e := os.MkdirTemp("", "weft-demo-*")
 		if e != nil {
 			return e
