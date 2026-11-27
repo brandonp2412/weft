@@ -17,10 +17,6 @@ To sign in, run `./bin/weft login --user @you:example.org`, then `./bin/weft`. P
 
 See the [guide](docs/guide.md) for login options, configuration, and commands.
 
-## Screenshots
-
-[Room picker](docs/screenshots/room-picker.png). Run `make screenshots` on Linux to refresh both previews. It uses Xvfb, xauth, xterm, xdotool, xwd, FFmpeg, Python 3, and DejaVu Sans Mono. The Screenshots workflow also uploads fresh PNGs on pushes and pull requests.
-
 ## License
 
 Weft's code, documentation, and demo screenshots are available under the [MIT License](LICENSE). Binary archives built with `make dist` include third-party notices and links to dependency source.
