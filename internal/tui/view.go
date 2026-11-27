@@ -212,12 +212,12 @@ func (m Model) sidebar() string {
 	rows = append(rows, accentStyle.Bold(true).Render("  weft"), dimStyle.Render(clip("  MATRIX IN THE TERMINAL", w-2)), "", dimStyle.Render("  ROOMS"))
 	start, end := m.sidebarRoomRange()
 	for _, r := range m.rooms[start:end] {
-		icon := " "
+		icon := "  "
 		if r.Pinned {
-			icon = "*"
+			icon = "📌"
 		}
 		if r.Membership == "invite" {
-			icon = "+"
+			icon = "+ "
 		}
 		suffix := ""
 		if r.Unread > 0 {
@@ -396,7 +396,7 @@ func (m Model) modalView() string {
 			r := rooms[i]
 			label := oneLine(r.Title())
 			if r.Pinned {
-				label = "* " + label
+				label = "📌 " + label
 			}
 			text := clip("  "+label+"  "+r.ID, width-6)
 			if i == index {

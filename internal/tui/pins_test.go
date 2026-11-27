@@ -19,9 +19,14 @@ func TestPinCommands(t *testing.T) {
 	if m.input.Value() != "draft" {
 		t.Fatal("pin changed draft")
 	}
-	if !strings.Contains(m.sidebar(), "*") {
+	if !strings.Contains(m.sidebar(), "📌") {
 		t.Fatal("sidebar missing pin")
 	}
+	m.mode = "rooms"
+	if !strings.Contains(m.modalView(), "📌") {
+		t.Fatal("room picker missing pin")
+	}
+	m.mode = ""
 	m.command("/unpin")
 	r, err := m.db.Room(room)
 	if err != nil || r.Pinned || m.statusError {
