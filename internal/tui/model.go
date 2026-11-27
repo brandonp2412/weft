@@ -349,6 +349,25 @@ func (m *Model) nextRoom(delta int) {
 	index = (index + delta + len(m.rooms)) % len(m.rooms)
 	m.switchRoom(m.rooms[index].ID)
 }
+
+// nextUnreadRoom follows sidebar order, wrapping once and skipping the current room.
+func (m *Model) nextUnreadRoom() bool {
+	index := -1
+	for i, r := range m.rooms {
+		if r.ID == m.current {
+			index = i
+			break
+		}
+	}
+	for offset := 1; offset <= len(m.rooms); offset++ {
+		r := m.rooms[(index+offset)%len(m.rooms)]
+		if r.ID != m.current && r.Unread > 0 {
+			m.switchRoom(r.ID)
+			return true
+		}
+	}
+	return false
+}
 func (m *Model) selectMessage(delta int) {
 	if len(m.messages) == 0 {
 		return
@@ -656,6 +675,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return attachmentResultMsg{result: cmd().(resultMsg), attachment: attachment, draft: draft}
 				}
 			}
+		}
+
+		// Tab navigates unread rooms unless the composer is completing a command.
+		if key == "tab" && (len(m.commandMatches()) == 0 || (m.settings.KeyboardMode == "vi" && !m.viInsert)) {
+			if m.nextUnreadRoom() {
+				return m, m.autoRead()
+			}
+			return m, nil
 		}
 
 		if m.settings.KeyboardMode == "vi" {

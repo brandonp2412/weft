@@ -162,6 +162,7 @@ as low priority are silent.
 | Ctrl+K | Find and switch rooms |
 | Alt+↑ / Alt+↓ | Previous / next room |
 | Ctrl+P / Ctrl+N | Previous / next room |
+| Tab | Next unread room (wraps; completes slash commands while composing) |
 | Ctrl+↑ / Ctrl+↓ | Select a message |
 | Page Up / Page Down | Scroll history; Page Up near the start loads earlier messages |
 | Ctrl+End | Return to the latest messages |

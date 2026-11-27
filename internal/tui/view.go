@@ -487,7 +487,8 @@ func (m Model) modalView() string {
 
 const helpText = `Enter send · Alt+Enter newline · Ctrl+K room picker
 / command suggestions · ↑/↓ choose · Tab/Enter complete · Esc dismiss
-Alt+↑/↓ or Ctrl+P/N switch rooms · Ctrl+↑/↓ select message
+Tab next unread room · Alt+↑/↓ or Ctrl+P/N switch rooms
+Ctrl+↑/↓ select message
 PgUp/PgDown scroll · Ctrl+End latest · Ctrl+C quit
 Esc cancel reply/edit or return from a thread
 

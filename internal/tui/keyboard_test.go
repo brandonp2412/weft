@@ -367,3 +367,69 @@ func TestViQuitConfirmation(t *testing.T) {
 		t.Fatal("q intercepted normal keyboard typing")
 	}
 }
+
+func TestTabNextUnreadRoom(t *testing.T) {
+	for _, mode := range []string{"normal", "vi", "vi-insert"} {
+		t.Run(mode, func(t *testing.T) {
+			m := demoModel(t)
+			if mode != "normal" {
+				m.settings.KeyboardMode = "vi"
+				m.viInsert = mode == "vi-insert"
+			}
+			press := func() {
+				updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+				m = updated.(Model)
+			}
+			studio, matrix, garden := "!studio:weft.local", "!matrix:weft.local", "!garden:weft.local"
+			m.switchRoom(studio)
+			m.input.SetValue("unfinished draft")
+			press()
+			if m.current != matrix || m.input.Value() != "" {
+				t.Fatal("Tab did not open next unread chat")
+			}
+			press()
+			if m.current != studio || m.input.Value() != "unfinished draft" {
+				t.Fatal("Tab did not wrap past read chats or restore draft")
+			}
+			if err := m.db.RoomField(matrix, "unread", 0); err != nil {
+				t.Fatal(err)
+			}
+			m.reload()
+			press()
+			if m.current != studio {
+				t.Fatal("Tab should not change room when only current room is unread")
+			}
+			m.switchRoom(garden)
+			press()
+			if m.current != studio {
+				t.Fatal("Tab should wrap from a read room to the first unread room")
+			}
+			if err := m.db.RoomField(studio, "unread", 0); err != nil {
+				t.Fatal(err)
+			}
+			m.reload()
+			press()
+			if m.current != studio {
+				t.Fatal("Tab should do nothing when all rooms are read")
+			}
+		})
+	}
+}
+
+func TestTabPreservesCommandCompletion(t *testing.T) {
+	for _, vi := range []bool{false, true} {
+		m := demoModel(t)
+		if vi {
+			m.settings.KeyboardMode = "vi"
+			m.viInsert = true
+		}
+		m.input.SetValue("/re")
+		want := "/" + m.commandMatches()[0] + " "
+		room := m.current
+		updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+		m = updated.(Model)
+		if m.current != room || m.input.Value() != want {
+			t.Fatal("Tab did not complete slash command")
+		}
+	}
+}
