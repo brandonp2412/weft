@@ -293,6 +293,26 @@ func (m *Model) command(line string) tea.Cmd {
 			}
 			return strings.Join(lines, "\n"), nil
 		})
+	case "readall":
+		if arg != "" {
+			return fail("Usage: /readall")
+		}
+		if m.demo {
+			for _, r := range m.rooms {
+				if r.Membership == "join" && r.Unread > 0 {
+					if err := m.db.RoomField(r.ID, "unread", 0); err != nil {
+						m.fail(err)
+						m.reload()
+						return nil
+					}
+				}
+			}
+			m.reload()
+			m.status = "All chats marked read"
+			m.statusError = false
+			return nil
+		}
+		return m.run("All chats marked read", m.backend.MarkAllRead)
 	case "read":
 		target := ""
 		for i := len(m.messages) - 1; i >= 0; i-- {

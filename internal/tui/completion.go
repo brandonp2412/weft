@@ -2,7 +2,7 @@ package tui
 
 import "strings"
 
-var slashCommands = strings.Fields(`accept back cancel confirm create devices discard dm download embed edit help history image invite join leave me members name pin q quit react read recover recover-passphrase redact reply retry rooms search setup-keys thread topic unpin upload verify whoami`)
+var slashCommands = strings.Fields(`accept back cancel confirm create devices discard dm download embed edit help history image invite join leave me members name pin q quit react read readall recover recover-passphrase redact reply retry rooms search setup-keys thread topic unpin upload verify whoami`)
 
 func (m Model) commandMatches() []string {
 	value := m.input.Value()

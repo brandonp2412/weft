@@ -197,6 +197,7 @@ To refer to a message, select it with Ctrl+↑/↓ and use `selected`, or use a 
 | `/retry` | Retry queued sends and encrypted messages |
 | `/discard #3` | Remove a queued send; a request already in flight may still be delivered |
 | `/read` | Send a read marker |
+| `/readall` | Mark all unread joined rooms as read on Matrix |
 | `/rooms` | Open the room picker |
 | `/pin` / `/unpin` | Set or remove the Matrix favourite tag; favourites from other clients also stay at the top |
 | `/join #alias:server` | Join a room; `/join` accepts the selected invitation |

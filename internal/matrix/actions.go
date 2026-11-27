@@ -79,6 +79,44 @@ func (b *Backend) MarkRead(ctx context.Context, room, target string) error {
 	return e
 }
 
+// MarkAllRead marks each known joined unread room at its latest server event.
+// Fetch the event from Matrix so rooms without cached history work too.
+func (b *Backend) MarkAllRead(ctx context.Context) error {
+	rooms, err := b.Store.Rooms()
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	failed := 0
+	for _, room := range rooms {
+		if room.Membership != "join" || room.Unread <= 0 {
+			continue
+		}
+		err = ctx.Err()
+		if err == nil {
+			var resp *mautrix.RespMessages
+			resp, err = b.Client.Messages(ctx, id.RoomID(room.ID), "", "", mautrix.DirectionBackward, nil, 1)
+			if err == nil {
+				if len(resp.Chunk) == 0 || resp.Chunk[0].ID == "" {
+					err = errors.New("no latest event available")
+				} else {
+					err = b.MarkRead(ctx, room.ID, resp.Chunk[0].ID.String())
+				}
+			}
+		}
+		if err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", room.Name, err)
+			}
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d room(s) could not be marked read: %w", failed, firstErr)
+	}
+	return nil
+}
+
 const MaxAttachment = 64 << 20
 
 func (b *Backend) Upload(ctx context.Context, room, path string) error {

@@ -496,6 +496,7 @@ Messages: Ctrl+↑/↓ to select, then use selected or $eventID
 /reply selected [text]    /edit selected [text]    /me action
 /thread selected [text]   /back             /react selected emoji
 /redact selected [reason]                  /read
+/readall mark all chats read
 /upload /path/to/file                /download selected /save/path
 /image /path/to/image or mxc://server/media [caption]
 /embed selected [caption]           Reuse an existing image
