@@ -6,7 +6,7 @@ TAGS := goolm
 DIST_NAME = weft-$(VERSION)-$(shell $(GO) env GOOS)-$(shell $(GO) env GOARCH)
 EXE = $(shell $(GO) env GOEXE)
 
-.PHONY: all build run demo screenshots test check integration install dist clean
+.PHONY: all build run demo screenshots test lint fmt fmt-check check integration install dist clean
 all: build
 build:
 	$(GO) build -tags $(TAGS) -trimpath -ldflags '-X main.version=$(VERSION)' -o bin/weft ./cmd/weft
@@ -18,10 +18,14 @@ screenshots: build
 	./scripts/screenshots.sh
 test:
 	$(GO) test -race -tags $(TAGS) ./...
-check:
+lint:
 	$(GO) vet -tags $(TAGS) ./...
+fmt:
+	$(GOFMT) -w cmd internal
+fmt-check:
 	@unformatted="$$($(GOFMT) -l cmd internal)" && \
-		{ test -z "$$unformatted" || { printf '%s\n' "$$unformatted"; exit 1; }; }
+		{ test -z "$$unformatted" || { printf 'Run make fmt to format:\n%s\n' "$$unformatted"; exit 1; }; }
+check: fmt-check lint test
 integration:
 	./scripts/integration.sh
 install: build

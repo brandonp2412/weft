@@ -323,6 +323,24 @@ func (b *Backend) Download(ctx context.Context, target, path string) error {
 	if e != nil {
 		return e
 	}
+	if path == "" {
+		dir, err := downloadsDir()
+		if err != nil {
+			return err
+		}
+		name := content.FileName
+		if name == "" {
+			name = content.Body
+		}
+		name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+		if name == "." || name == ".." || name == "/" || strings.TrimSpace(name) == "" || strings.ContainsRune(name, 0) {
+			name = "attachment"
+		}
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+		path = filepath.Join(dir, name)
+	}
 	data, e := b.downloadMedia(ctx, content.URL, content.File, MaxAttachment)
 	if e != nil {
 		return e

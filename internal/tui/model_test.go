@@ -222,3 +222,57 @@ func TestRoomPickerSelectionTracksQueryChanges(t *testing.T) {
 		t.Fatal("pasted query did not reset selection")
 	}
 }
+
+func TestTabCyclesModalOptions(t *testing.T) {
+	for _, mode := range []string{"rooms", "search-results"} {
+		t.Run(mode, func(t *testing.T) {
+			m := demoModel(t)
+			m.openPrompt(mode)
+			m.search = []store.Message{{ID: "$first"}, {ID: "$second"}}
+			count := len(m.search)
+			if mode == "rooms" {
+				count = len(m.filteredRooms())
+			}
+			for _, step := range []struct {
+				shift bool
+				want  int
+			}{
+				{false, 1},
+				{true, 0},
+				{true, count - 1},
+				{false, 0},
+			} {
+				key := tea.KeyPressMsg{Code: tea.KeyTab}
+				if step.shift {
+					key.Mod = tea.ModShift
+				}
+				updated, _ := m.Update(key)
+				m = updated.(Model)
+				if m.mode != mode || m.promptIndex != step.want || m.prompt.Value() != "" {
+					t.Fatalf("%s selected index %d, want %d with modal open and query unchanged", key.String(), m.promptIndex, step.want)
+				}
+			}
+		})
+	}
+}
+
+func TestTimelineGroupsConsecutiveMessagesBySender(t *testing.T) {
+	m := demoModel(t)
+	day := time.Date(2026, 11, 24, 12, 0, 0, 0, time.Local)
+	m.messages = []store.Message{
+		{ID: "1", Sender: "@alice:test", Body: "first", TS: day.UnixMilli()},
+		{ID: "2", Sender: "@alice:test", Body: "second", TS: day.UnixMilli()},
+		{ID: "3", Sender: "@bob:test", Body: "third", TS: day.UnixMilli()},
+		{ID: "4", Sender: "@alice:test", Body: "fourth", TS: day.UnixMilli()},
+		{ID: "5", Sender: "@alice:test", Body: "fifth", TS: day.AddDate(0, 0, 1).UnixMilli()},
+	}
+	m.selected = "2"
+	m.renderTimeline()
+	timeline := ansi.Strip(strings.Join(m.rendered, "\n"))
+	if !strings.Contains(timeline, "    first\n\n▎   second\n\n  @bob:test") {
+		t.Fatalf("consecutive messages should share a heading and retain selection:\n%s", timeline)
+	}
+	if strings.Count(timeline, "@alice:test") != 3 {
+		t.Fatalf("sender should have a heading after a sender or date change:\n%s", timeline)
+	}
+}

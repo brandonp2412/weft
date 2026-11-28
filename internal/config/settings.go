@@ -11,21 +11,23 @@ import (
 
 // Settings contains user preferences, separate from account credentials.
 type Settings struct {
-	TimeFormat           string `toml:"time_format"`
-	DesktopNotifications bool   `toml:"desktop_notifications"`
-	NotificationPreviews bool   `toml:"notification_previews"`
-	ImagePreviews        bool   `toml:"image_previews"`
-	KeyboardMode         string `toml:"keyboard_mode"`
-	ShowSidebar          bool   `toml:"show_sidebar"`
-	HistoryLimit         int    `toml:"history_limit"`
-	HistoryPageSize      int    `toml:"history_page_size"`
-	MouseScrollLines     int    `toml:"mouse_scroll_lines"`
-	TypingNotifications  bool   `toml:"typing_notifications"`
-	ReadReceipts         bool   `toml:"read_receipts"`
+	TimeFormat             string `toml:"time_format"`
+	DesktopNotifications   bool   `toml:"desktop_notifications"`
+	NotificationPreviews   bool   `toml:"notification_previews"`
+	ImagePreviews          bool   `toml:"image_previews"`
+	KeyboardMode           string `toml:"keyboard_mode"`
+	ShowSidebar            bool   `toml:"show_sidebar"`
+	ShowSendingIndicators  bool   `toml:"show_sending_indicators"`
+	QueuedIndicatorDelayMS int    `toml:"queued_indicator_delay_ms"`
+	HistoryLimit           int    `toml:"history_limit"`
+	HistoryPageSize        int    `toml:"history_page_size"`
+	MouseScrollLines       int    `toml:"mouse_scroll_lines"`
+	TypingNotifications    bool   `toml:"typing_notifications"`
+	ReadReceipts           bool   `toml:"read_receipts"`
 }
 
 func DefaultSettings() Settings {
-	return Settings{TimeFormat: "24h", DesktopNotifications: true, KeyboardMode: "normal", ShowSidebar: true, HistoryLimit: 150, HistoryPageSize: 50, MouseScrollLines: 3, TypingNotifications: true, ReadReceipts: true}
+	return Settings{TimeFormat: "24h", DesktopNotifications: true, KeyboardMode: "normal", ShowSidebar: true, ShowSendingIndicators: true, QueuedIndicatorDelayMS: 1000, HistoryLimit: 150, HistoryPageSize: 50, MouseScrollLines: 3, TypingNotifications: true, ReadReceipts: true}
 }
 
 func SettingsPath() string {
@@ -62,6 +64,9 @@ func (s Settings) Validate() error {
 	}
 	if s.KeyboardMode != "normal" && s.KeyboardMode != "vi" {
 		return fmt.Errorf("keyboard_mode must be normal or vi")
+	}
+	if s.QueuedIndicatorDelayMS < 0 || s.QueuedIndicatorDelayMS > 60000 {
+		return fmt.Errorf("queued_indicator_delay_ms must be between 0 and 60000")
 	}
 	if s.HistoryLimit < 1 || s.HistoryLimit > 10000 {
 		return fmt.Errorf("history_limit must be between 1 and 10000")

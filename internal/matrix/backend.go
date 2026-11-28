@@ -394,10 +394,7 @@ func (b *Backend) handleEvent(ctx context.Context, evt *event.Event) {
 			reply = c.RelatesTo.GetReplyTo().String()
 			thread = c.RelatesTo.GetThreadParent().String()
 		}
-		b.record(b.Store.SaveMessage(store.Message{ID: evt.ID.String(), RoomID: evt.RoomID.String(), Sender: evt.Sender.String(), Body: body, Kind: kind, TS: evt.Timestamp, ReplyTo: reply, ThreadRoot: thread, Encrypted: evt.Mautrix.EventSource&event.SourceDecrypted != 0, Raw: raw}, false))
-		if evt.Unsigned.TransactionID != "" {
-			b.record(b.Store.RemovePending(evt.Unsigned.TransactionID))
-		}
+		b.record(b.Store.SaveMessageEcho(store.Message{ID: evt.ID.String(), RoomID: evt.RoomID.String(), Sender: evt.Sender.String(), Body: body, Kind: kind, TS: evt.Timestamp, ReplyTo: reply, ThreadRoot: thread, Encrypted: evt.Mautrix.EventSource&event.SourceDecrypted != 0, Raw: raw}, false, evt.Unsigned.TransactionID))
 		b.Changed()
 	}
 }
@@ -484,6 +481,7 @@ func (b *Backend) outboxLoop() {
 			}
 			raw, _ := json.Marshal(p.Content)
 			evt := &event.Event{ID: resp.EventID, RoomID: id.RoomID(p.RoomID), Sender: b.Client.UserID, Timestamp: p.TS, Type: event.EventMessage, Content: event.Content{VeryRaw: raw}}
+			evt.Unsigned.TransactionID = p.Txn
 			_ = evt.Content.ParseRaw(event.EventMessage)
 			if room.Encrypted {
 				evt.Mautrix.EventSource |= event.SourceDecrypted

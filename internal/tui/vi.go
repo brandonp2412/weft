@@ -398,6 +398,10 @@ func (m *Model) updateVi(key string) (tea.Cmd, bool) {
 				}
 				return m.autoRead(), true
 			case "G":
+				if m.scroll > 0 {
+					m.scroll = 0
+					return m.autoRead(), true
+				}
 				if len(m.rooms) > 0 {
 					m.switchRoom(m.rooms[len(m.rooms)-1].ID)
 				}

@@ -52,6 +52,7 @@ type Message struct {
 	Error      string
 	Reactions  string
 	Raw        []byte
+	ImageInfo  *event.FileInfo
 }
 type Pending struct {
 	Txn, RoomID string
@@ -192,6 +193,11 @@ func (s *Store) MemberName(roomID, user string) string {
 	return name
 }
 func (s *Store) SaveMessage(m Message, unread bool) error {
+	return s.SaveMessageEcho(m, unread, "")
+}
+
+// SaveMessageEcho replaces an outbox entry atomically with its confirmed event.
+func (s *Store) SaveMessageEcho(m Message, unread bool, txn string) error {
 	tx, e := s.DB.Begin()
 	if e != nil {
 		return e
@@ -206,6 +212,11 @@ func (s *Store) SaveMessage(m Message, unread bool) error {
 	_, e = tx.Exec("INSERT INTO rooms(id,last_ts) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET last_ts=MAX(last_ts,excluded.last_ts)", m.RoomID, m.TS)
 	if e != nil {
 		return e
+	}
+	if txn != "" {
+		if _, e = tx.Exec("DELETE FROM outbox WHERE txn=? AND room_id=?", txn, m.RoomID); e != nil {
+			return e
+		}
 	}
 	// Unread counts from /sync are authoritative; this flag is reserved for local backends.
 	_ = unread
@@ -226,6 +237,16 @@ func (s *Store) Redact(target, redactionID, room, sender string, ts int64) error
 func scanMessage(row interface{ Scan(...any) error }) (Message, error) {
 	var m Message
 	e := row.Scan(&m.ID, &m.RoomID, &m.Sender, &m.Body, &m.Kind, &m.TS, &m.ReplyTo, &m.ThreadRoot, &m.Edited, &m.Redacted, &m.Encrypted, &m.Raw)
+	if e == nil && m.Kind == "m.image" && !m.Redacted {
+		var metadata struct {
+			Content struct {
+				Info *event.FileInfo `json:"info"`
+			} `json:"content"`
+		}
+		if json.Unmarshal(m.Raw, &metadata) == nil {
+			m.ImageInfo = metadata.Content.Info
+		}
+	}
 	return m, e
 }
 
@@ -238,8 +259,36 @@ func (s *Store) Message(eventID string) (Message, error) {
 	}
 	return s.decorate(m)
 }
+
+type messageQuerier interface {
+	Query(string, ...any) (*sql.Rows, error)
+	QueryRow(string, ...any) *sql.Row
+}
+
 func (s *Store) Messages(roomID string, limit int) ([]Message, error) {
-	rows, e := s.DB.Query("SELECT "+messageCols+" FROM (SELECT * FROM messages WHERE room_id=? ORDER BY ts DESC,id DESC LIMIT ?) ORDER BY ts,id", roomID, limit)
+	return messages(s.DB, roomID, limit)
+}
+
+// Timeline reads confirmed and queued events from one database snapshot.
+func (s *Store) Timeline(roomID string, limit int) ([]Message, []Pending, error) {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+	msgs, err := messages(tx, roomID, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	queued, err := pending(tx, roomID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return msgs, queued, tx.Commit()
+}
+
+func messages(q messageQuerier, roomID string, limit int) ([]Message, error) {
+	rows, e := q.Query("SELECT "+messageCols+" FROM (SELECT * FROM messages WHERE room_id=? ORDER BY ts DESC,id DESC LIMIT ?) ORDER BY ts,id", roomID, limit)
 	if e != nil {
 		return nil, e
 	}
@@ -258,7 +307,7 @@ func (s *Store) Messages(roomID string, limit int) ([]Message, error) {
 		return nil, e
 	}
 	for i := range out {
-		out[i], e = s.decorate(out[i])
+		out[i], e = decorate(q, out[i])
 		if e != nil {
 			return nil, e
 		}
@@ -266,8 +315,11 @@ func (s *Store) Messages(roomID string, limit int) ([]Message, error) {
 	return out, nil
 }
 func (s *Store) decorate(m Message) (Message, error) {
+	return decorate(s.DB, m)
+}
+func decorate(q messageQuerier, m Message) (Message, error) {
 	var n int
-	e := s.DB.QueryRow("SELECT COUNT(*) FROM relations WHERE target=? AND room_id=? AND kind='redaction'", m.ID, m.RoomID).Scan(&n)
+	e := q.QueryRow("SELECT COUNT(*) FROM relations WHERE target=? AND room_id=? AND kind='redaction'", m.ID, m.RoomID).Scan(&n)
 	if e != nil {
 		return m, e
 	}
@@ -277,14 +329,14 @@ func (s *Store) decorate(m Message) (Message, error) {
 		return m, nil
 	}
 	var edited string
-	e = s.DB.QueryRow(`SELECT body FROM relations r WHERE target=? AND room_id=? AND kind='edit' AND sender=? AND redacted=0 AND NOT EXISTS(SELECT 1 FROM relations d WHERE d.kind='redaction' AND d.target=r.id AND d.room_id=r.room_id) ORDER BY ts DESC,id DESC LIMIT 1`, m.ID, m.RoomID, m.Sender).Scan(&edited)
+	e = q.QueryRow(`SELECT body FROM relations r WHERE target=? AND room_id=? AND kind='edit' AND sender=? AND redacted=0 AND NOT EXISTS(SELECT 1 FROM relations d WHERE d.kind='redaction' AND d.target=r.id AND d.room_id=r.room_id) ORDER BY ts DESC,id DESC LIMIT 1`, m.ID, m.RoomID, m.Sender).Scan(&edited)
 	if e == nil {
 		m.Body = edited
 		m.Edited = true
 	} else if e != sql.ErrNoRows {
 		return m, e
 	}
-	rows, e := s.DB.Query(`SELECT body,COUNT(DISTINCT sender) FROM relations r WHERE target=? AND room_id=? AND kind='reaction' AND redacted=0 AND NOT EXISTS(SELECT 1 FROM relations d WHERE d.kind='redaction' AND d.target=r.id AND d.room_id=r.room_id) GROUP BY body ORDER BY body`, m.ID, m.RoomID)
+	rows, e := q.Query(`SELECT body,COUNT(DISTINCT sender) FROM relations r WHERE target=? AND room_id=? AND kind='reaction' AND redacted=0 AND NOT EXISTS(SELECT 1 FROM relations d WHERE d.kind='redaction' AND d.target=r.id AND d.room_id=r.room_id) GROUP BY body ORDER BY body`, m.ID, m.RoomID)
 	if e != nil {
 		return m, e
 	}
@@ -311,7 +363,16 @@ func (s *Store) Enqueue(roomID, txn string, content event.MessageEventContent) e
 	return e
 }
 func (s *Store) Pending() ([]Pending, error) {
-	rows, e := s.DB.Query("SELECT txn,room_id,content,ts,error FROM outbox ORDER BY ts,txn")
+	return pending(s.DB, "")
+}
+func pending(q messageQuerier, roomID string) ([]Pending, error) {
+	query := "SELECT txn,room_id,content,ts,error FROM outbox"
+	var args []any
+	if roomID != "" {
+		query += " WHERE room_id=?"
+		args = append(args, roomID)
+	}
+	rows, e := q.Query(query+" ORDER BY ts,txn", args...)
 	if e != nil {
 		return nil, e
 	}

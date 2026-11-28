@@ -13,7 +13,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"golang.org/x/image/draw"
+	"weft/internal/store"
 )
 
 const (
@@ -80,6 +82,10 @@ func previewLines(thumb *image.NRGBA, maxWidth, maxRows int) []string {
 		return nil
 	}
 	width, height := previewSize(thumb.Bounds().Dx(), thumb.Bounds().Dy(), min(maxWidth, previewWidth), 2*maxRows)
+	return previewLinesSized(thumb, width, height)
+}
+
+func previewLinesSized(thumb *image.NRGBA, width, height int) []string {
 	at := func(x, y int) color.NRGBA {
 		return previewPixel(thumb.NRGBAAt(x*thumb.Bounds().Dx()/width, y*thumb.Bounds().Dy()/height))
 	}
@@ -99,6 +105,67 @@ func previewLines(thumb *image.NRGBA, maxWidth, maxRows int) []string {
 		rows = append(rows, row.String())
 	}
 	return rows
+}
+
+// timelinePreview reserves a box from the event, independent of the download.
+// Missing dimensions use a bounded box; mismatched thumbnails fit inside it.
+func (m Model) timelinePreview(msg store.Message, columns int) ([]string, sixelTile) {
+	cellWidth, cellHeight := 1, 2
+	maxWidth, maxHeight := min(columns, previewWidth), 2*previewRows
+	sixel := m.sixelSupported && m.cellWidth > 0 && m.cellHeight > 0
+	if sixel {
+		cellWidth, cellHeight = m.cellWidth, m.cellHeight
+		maxWidth = min(maxPreviewWidth, columns*cellWidth)
+		maxHeight = min(maxPreviewHeight, min(17, max(1, m.height-13))*cellHeight)
+	}
+	width, height := maxWidth, maxHeight
+	info := msg.ImageInfo
+	if info != nil && (info.Width <= 0 || info.Height <= 0) {
+		info = info.ThumbnailInfo
+	}
+	if info != nil && info.Width > 0 && info.Height > 0 {
+		if sixel {
+			maxWidth = min(maxWidth, info.Width)
+			maxHeight = min(maxHeight, info.Height)
+		}
+		width, height = previewSize(info.Width, info.Height, maxWidth, maxHeight)
+	}
+	rows := (height + cellHeight - 1) / cellHeight
+	cols := (width + cellWidth - 1) / cellWidth
+	thumb, loaded := m.previews[msg.ID]
+	lines := make([]string, 0, rows)
+	var tile sixelTile
+	if thumb != nil {
+		bounds := thumb.Bounds()
+		w, h := previewSize(bounds.Dx(), bounds.Dy(), width, height)
+		if sixel {
+			tile = sixelTile{thumb, w, h, cellWidth, cellHeight}
+			lines = append(lines, tile.blankLines()...)
+		} else {
+			lines = append(lines, previewLinesSized(thumb, w, h)...)
+		}
+	}
+	if thumb == nil {
+		label := "Loading image…"
+		if msg.Pending {
+			label = "Image preview"
+		} else if loaded {
+			label = "Preview unavailable"
+		}
+		style := lipgloss.NewStyle().Background(panel).Foreground(muted)
+		for len(lines) < rows {
+			text := ""
+			if len(lines) == (rows-1)/2 {
+				label = clip(label, cols)
+				text = strings.Repeat(" ", (cols-lipgloss.Width(label))/2) + label
+			}
+			lines = append(lines, "    "+style.Render(fit(text, cols)))
+		}
+	}
+	for len(lines) < rows {
+		lines = append(lines, "")
+	}
+	return lines, tile
 }
 
 func (m *Model) nextImagePreview() tea.Cmd {

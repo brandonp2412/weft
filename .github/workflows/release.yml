@@ -7,6 +7,10 @@ on:
         description: Release version (for example, 0.1.0)
         required: true
         type: string
+      release_notes:
+        description: Review the diff since the last published release and summarize user-visible changes in plain English (500 characters max).
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -35,7 +39,12 @@ jobs:
           fi
       - uses: actions/checkout@v4
       - name: Validate handwritten release notes
-        run: python3 scripts/release_notes.py "release-notes/$VERSION.txt"
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          notes_file="$RUNNER_TEMP/weft-release-notes.txt"
+          printf '%s\n' "$RELEASE_NOTES" > "$notes_file"
+          python3 scripts/release_notes.py "$notes_file" "$notes_file"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -60,4 +69,4 @@ jobs:
             exit 1
           fi
 
-          gh release create "$tag" "$archive" --verify-tag --title "$tag" --notes-file "release-notes/$VERSION.txt"
+          gh release create "$tag" "$archive" --verify-tag --title "$tag" --notes-file "$RUNNER_TEMP/weft-release-notes.txt"

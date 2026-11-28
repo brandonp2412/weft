@@ -148,6 +148,36 @@ func TestViScrollsChatWithUD(t *testing.T) {
 	}
 }
 
+func TestViGReturnsToChatBottomBeforeSwitchingRooms(t *testing.T) {
+	m := viModel(t)
+	m.switchRoom(m.rooms[0].ID)
+	room := m.current
+	last := m.rooms[len(m.rooms)-1].ID
+	if room == last {
+		t.Fatal("need multiple rooms")
+	}
+	m.height = 20
+	m.rendered = make([]string, 100)
+	m = viKeys(m, "u")
+	if m.scroll == 0 {
+		t.Fatal("u did not scroll up")
+	}
+	m = viKeys(m, "G")
+	if m.current != room || m.scroll != 0 {
+		t.Fatalf("G: room %s, scroll %d", m.current, m.scroll)
+	}
+	m = viKeys(m, "G")
+	if m.current != last {
+		t.Fatal("G at bottom did not jump to last chat")
+	}
+	m.input.SetValue("draft")
+	m.viSetPos(0)
+	m = viKeys(m, "G")
+	if m.viPos() != len("draft") || m.current != last {
+		t.Fatal("G did not retain draft navigation")
+	}
+}
+
 func TestViDraftNavigation(t *testing.T) {
 	m := viModel(t)
 	m.input.SetValue("first line\nsecond line\n漢字 third")
@@ -408,9 +438,14 @@ func TestTabNextUnreadRoom(t *testing.T) {
 				t.Fatal(err)
 			}
 			m.reload()
-			press()
-			if m.current != studio {
-				t.Fatal("Tab should do nothing when all rooms are read")
+			rooms := m.rooms
+			m.switchRoom(rooms[0].ID)
+			for i := 1; i <= len(rooms); i++ {
+				room := rooms[i%len(rooms)]
+				press()
+				if m.current != room.ID {
+					t.Fatalf("Tab with all rooms read opened %q, want %q", m.current, room.ID)
+				}
 			}
 		})
 	}

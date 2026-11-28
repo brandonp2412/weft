@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
+	"image"
 	"time"
 
 	"weft/internal/store"
@@ -40,9 +42,14 @@ func SeedDemo(db *store.Store) error {
 	}
 	_ = db.Relation("$reaction1", rooms[0].ID, "$demo-3", "@alex:weft.local", "reaction", "🧶", now.UnixMilli())
 	_ = db.Relation("$reaction2", rooms[0].ID, "$demo-3", "@sam:weft.local", "reaction", "🧶", now.UnixMilli())
+	dimensions, _, err := image.DecodeConfig(bytes.NewReader(demoImage))
+	if err != nil {
+		return err
+	}
 	return db.SaveMessage(store.Message{
 		ID: demoImageID, RoomID: rooms[0].ID, Sender: "@sam:weft.local",
 		Body: "kitten.jpg", Kind: "m.image", TS: now.Add(45 * time.Minute).UnixMilli(),
 		Encrypted: true,
+		Raw:       []byte(fmt.Sprintf(`{"content":{"info":{"w":%d,"h":%d}}}`, dimensions.Width, dimensions.Height)),
 	}, false)
 }

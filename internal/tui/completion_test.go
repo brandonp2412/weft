@@ -6,6 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"weft/internal/store"
 )
 
 func TestCommandCompletion(t *testing.T) {
@@ -61,6 +63,34 @@ func TestCompletionLayout(t *testing.T) {
 		}
 		if !strings.Contains(ansi.Strip(m.View().Content), "/whoami") {
 			t.Fatal("selected completion not visible")
+		}
+	}
+}
+
+func TestDownloadCompletion(t *testing.T) {
+	m := demoModel(t)
+	m.messages = []store.Message{
+		{Kind: "m.file", Body: "Report.pdf"},
+		{Kind: "m.text", Body: "ordinary message"},
+		{Kind: "m.image", Body: "photo.png"},
+		{Kind: "m.file", Body: "pending.zip", Pending: true},
+		{Kind: "m.file", Body: "deleted.zip", Redacted: true},
+	}
+	m.input.SetValue("/download ")
+	matches := m.completions()
+	if len(matches) != 2 || matches[0].label != "#3 photo.png" || matches[1].label != "#1 Report.pdf" {
+		t.Fatalf("unexpected attachment suggestions: %+v", matches)
+	}
+	for input, want := range map[string]string{
+		"/download ":    "/download #3 ",
+		"/download #1":  "/download #1 ",
+		"/download PDF": "/download #1 ",
+	} {
+		m.input.SetValue(input)
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+		completed := updated.(Model)
+		if got := completed.input.Value(); got != want || cmd != nil || len(completed.completions()) != 0 {
+			t.Fatalf("completion for %q: got %q, want %q ready for a save path", input, got, want)
 		}
 	}
 }

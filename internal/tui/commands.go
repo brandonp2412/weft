@@ -393,10 +393,11 @@ func (m *Model) command(line string) tea.Cmd {
 		case "embed":
 			return m.run("Image queued", func(ctx context.Context) error { return m.backend.Embed(room, target, body) })
 		case "download":
+			destination := body
 			if body == "" {
-				return fail("Usage: /download #number /path/to/save")
+				destination = "Downloads"
 			}
-			return m.run("Saved attachment to "+body, func(ctx context.Context) error { return m.backend.Download(ctx, target, body) })
+			return m.run("Saved attachment to "+destination, func(ctx context.Context) error { return m.backend.Download(ctx, target, body) })
 		}
 	case "image":
 		if arg == "" {

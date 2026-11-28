@@ -1,6 +1,9 @@
+# Wrapping up work
 
-
-# Release notes
-- Before publishing, inspect changes since the last published release, including the diff, not just commit titles. Write concise plain-English notes about actual user-visible changes.
-- Commit the notes as release-notes/<version>.txt (without a v prefix), using at most 500 characters. Never use raw commit subjects, unverified claims, or generic placeholder text. Prepare notes before triggering the release workflow.
-- The release workflow uses the same notes for supported release destinations. Do not publish an extra release solely because release automation changed. Do not rewrite historical releases.
+- Whenever you finish a bug/feature, `make` and restart any instances of weft
+with the newly built binary.
+- Before handing back changes, format the Go files you changed with `gofmt -w`
+(or use `make fmt` for the whole tree), then run `make check`. It checks formatting,
+runs `go vet`, and runs the Go tests with the race detector. Fix failures caused
+by your changes and report any remaining failures.
+- Once everything looks good, git commit

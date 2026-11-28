@@ -57,15 +57,21 @@ type timelineTile struct {
 }
 
 func (m *Model) renderTimeline() {
+	m.renderTimelineAt(time.Now())
+}
+
+func (m *Model) renderTimelineAt(now time.Time) {
+	m.nextQueuedAt = time.Time{}
 	m.rendered = nil
 	m.timelineTiles = nil
 	m.spans = map[string][2]int{}
 	width := max(10, m.mainWidth()-6)
 	date := ""
-	for _, msg := range m.messages {
+	for i, msg := range m.messages {
 		start := len(m.rendered)
 		t := time.UnixMilli(msg.TS)
 		day := t.Format("Monday, 2 January 2006")
+		grouped := i > 0 && day == date && msg.Sender != "" && msg.Sender == m.messages[i-1].Sender
 		if day != date {
 			m.rendered = append(m.rendered, "", dimStyle.Render("  ── "+day+" ──"), "")
 			date = day
@@ -75,28 +81,39 @@ func (m *Model) renderTimeline() {
 			name = oneLine(msg.Sender)
 		}
 		badge := ""
-		if msg.Pending {
-			badge = "  queued"
-			if msg.Error != "" {
-				badge = "  retrying"
+		if msg.Pending && msg.Error != "" {
+			badge = "  retrying"
+		} else if msg.Pending && m.settings.ShowSendingIndicators {
+			deadline := t.Add(time.Duration(m.settings.QueuedIndicatorDelayMS) * time.Millisecond)
+			if m.settings.QueuedIndicatorDelayMS == 0 || !now.Before(deadline) {
+				badge = "  queued"
+			} else if m.nextQueuedAt.IsZero() || deadline.Before(m.nextQueuedAt) {
+				m.nextQueuedAt = deadline
 			}
 		}
 		if msg.Edited {
 			badge += "  edited"
 		}
-		prefix := "  "
-		if msg.ID == m.selected {
-			prefix = "▎ "
-		}
-		heading := fmt.Sprintf("%s%s  %s%s", prefix, name, t.Format(m.timeLayout()), badge)
 		style := accentStyle
 		if msg.Sender == m.userID() {
 			style = lipgloss.NewStyle().Foreground(gold)
 		}
-		if msg.ID == m.selected {
+		selected := msg.ID == m.selected
+		if selected {
 			style = style.Bold(true)
 		}
-		m.rendered = append(m.rendered, clip(style.Render(heading), m.mainWidth()-2))
+		if !grouped {
+			prefix := "  "
+			if selected {
+				prefix = "▎ "
+			}
+			heading := style.Render(fmt.Sprintf("%s%s  %s", prefix, name, t.Format(m.timeLayout())))
+			badgeStyle := style
+			if msg.Pending && msg.Error != "" {
+				badgeStyle = lipgloss.NewStyle().Foreground(red)
+			}
+			m.rendered = append(m.rendered, clip(heading+badgeStyle.Render(badge), m.mainWidth()-2))
+		}
 		if msg.ReplyTo != "" {
 			label := "reply to " + msg.ReplyTo
 			for _, original := range m.messages {
@@ -112,26 +129,41 @@ func (m *Model) renderTimeline() {
 			text = "* " + name + " " + text
 		}
 		switch msg.Kind {
-		case "m.image", "m.file", "m.audio", "m.video", "m.sticker":
-			text = "↧ " + text + "  [attachment · /download selected path]"
+		case "m.file", "m.audio", "m.video", "m.sticker":
+			text = "↧ " + text + "  [attachment · /download selected]"
 		}
 		if msg.Redacted {
 			text = "[message deleted]"
 		}
 		m.rendered = append(m.rendered, renderMessageBody(text, width)...)
-		if m.settings.ImagePreviews && !msg.Redacted && msg.Kind == "m.image" {
-			thumb := m.previews[msg.ID]
-			if tile := m.imageTile(thumb, width, min(17, max(1, m.height-13))); tile.image != nil {
-				m.timelineTiles = append(m.timelineTiles, timelineTile{len(m.rendered), tile})
-				m.rendered = append(m.rendered, tile.blankLines()...)
-			} else {
-				m.rendered = append(m.rendered, previewLines(thumb, width, previewRows)...)
+		if grouped {
+			if start == len(m.rendered) {
+				m.rendered = append(m.rendered, "  ")
 			}
+			if selected {
+				m.rendered[start] = strings.Replace(m.rendered[start], "  ", style.Render("▎ "), 1)
+			}
+		}
+		if m.settings.ImagePreviews && !msg.Redacted && msg.Kind == "m.image" {
+			lines, tile := m.timelinePreview(msg, width)
+			if tile.image != nil {
+				m.timelineTiles = append(m.timelineTiles, timelineTile{len(m.rendered), tile})
+			}
+			m.rendered = append(m.rendered, lines...)
 		}
 		if msg.Reactions != "" {
 			m.rendered = append(m.rendered, accentStyle.Render(clip("    "+oneLine(msg.Reactions), width+4)))
 		}
-		m.rendered = append(m.rendered, "")
+		// Grouped delivery labels occupy the existing separator, never an extra row.
+		separator := ""
+		if grouped && badge != "" {
+			badgeStyle := dimStyle
+			if msg.Pending && msg.Error != "" {
+				badgeStyle = lipgloss.NewStyle().Foreground(red)
+			}
+			separator = badgeStyle.Render(clip("  "+badge, m.mainWidth()-2))
+		}
+		m.rendered = append(m.rendered, separator)
 		m.spans[msg.ID] = [2]int{start, len(m.rendered)}
 	}
 }
@@ -407,7 +439,7 @@ func (m Model) modalView() string {
 		if len(rooms) == 0 {
 			lines = append(lines, "  No matching conversations")
 		}
-		footer = "↑/↓ choose · Enter switch · Esc cancel"
+		footer = "Tab/↑/↓ choose · Enter switch · Esc cancel"
 	case "setup-keys":
 		title = "Set up encryption for a new account"
 		lines = []string{"Creates cross-signing and an encrypted server key backup.", "Existing encryption identities will never be replaced.", "", "Enter your account password to authorize setup:", m.prompt.View(), "", "A recovery key will appear once. Save it securely."}
@@ -435,7 +467,7 @@ func (m Model) modalView() string {
 		if len(m.search) == 0 {
 			lines = []string{"No matches in cached history. Load older messages with PgUp."}
 		}
-		footer = "↑/↓ choose · Enter jump to message · Esc cancel"
+		footer = "Tab/↑/↓ choose · Enter jump · Esc cancel"
 	case "verification":
 		title = "Verify this device"
 		if m.verification != nil {
@@ -487,7 +519,8 @@ func (m Model) modalView() string {
 
 const helpText = `Enter send · Alt+Enter newline · Ctrl+K room picker
 / command suggestions · ↑/↓ choose · Tab/Enter complete · Esc dismiss
-Tab next unread room · Alt+↑/↓ or Ctrl+P/N switch rooms
+Tab next unread room or next room when all are read
+Alt+↑/↓ or Ctrl+P/N switch rooms
 Ctrl+↑/↓ select message
 PgUp/PgDown scroll · Ctrl+End latest · Ctrl+C quit
 Esc cancel reply/edit or return from a thread
@@ -497,7 +530,7 @@ Messages: Ctrl+↑/↓ to select, then use selected or $eventID
 /thread selected [text]   /back             /react selected emoji
 /redact selected [reason]                  /read
 /readall mark all chats read
-/upload /path/to/file                /download selected /save/path
+/upload /path/to/file                /download selected [/save/path]
 /image /path/to/image or mxc://server/media [caption]
 /embed selected [caption]           Reuse an existing image
 /search [query]    /history          /retry

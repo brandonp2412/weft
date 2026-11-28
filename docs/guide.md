@@ -83,6 +83,8 @@ Weft encrypts messages and uploaded files in encrypted rooms. Reactions and room
 
 ## Configuration
 
+The queued indicator appears only after `queued_indicator_delay_ms` (default 1000 ms; 0 shows it immediately). Set `show_sending_indicators = false` to hide normal sending indicators entirely. Failed sends still show a red retrying label and an error in the status bar; they remain in the outbox and are retried automatically. Use `/retry` to retry immediately or `/discard #number` to discard an unsent message.
+
 Weft reads preferences from `$XDG_CONFIG_HOME/weft/config.toml`, or
 `~/.config/weft/config.toml` when `XDG_CONFIG_HOME` is unset. Use
 `weft --config /path/to/config.toml` to choose another file, including for
@@ -111,7 +113,7 @@ Preferences are separate from session credentials and the data directory.
 | `h` / `l` | Move left / right within a draft |
 | `w` / `b` / `e` | Next word / previous word / end of word |
 | `0` / `^` / `$` | Start / first nonblank / end of line |
-| `gg` / `G` | First / last chat with an empty draft; beginning / end of a draft otherwise |
+| `gg` / `G` | First / last chat with an empty draft; `G` returns to the current chat bottom first when scrolled up. Beginning / end of a draft otherwise. |
 | `d` / `c` / `y` + motion | Delete / change / yank text covered by a motion |
 | `dd` / `cc` / `yy` | Delete / change / yank a line |
 | `D` / `C` | Delete / change to end of line |
@@ -162,7 +164,7 @@ as low priority are silent.
 | Ctrl+K | Find and switch rooms |
 | Alt+↑ / Alt+↓ | Previous / next room |
 | Ctrl+P / Ctrl+N | Previous / next room |
-| Tab | Next unread room (wraps; completes slash commands while composing) |
+| Tab | Next unread room, or next room in sidebar order when all are read. Wraps at the bottom and completes slash commands while composing. |
 | Ctrl+↑ / Ctrl+↓ | Select a message |
 | Page Up / Page Down | Scroll history; Page Up near the start loads earlier messages |
 | Ctrl+End | Return to the latest messages |
@@ -191,7 +193,7 @@ To refer to a message, select it with Ctrl+↑/↓ and use `selected`, or use a 
 | `/image /path/to/image` | Upload an image (also supported by `/upload`) |
 | `/image mxc://server/media [caption]` | Embed an existing unencrypted Matrix image |
 | `/embed #3 [caption]` | Reuse an image message, including encrypted media |
-| `/download #3 /save/path` | Download and decrypt an attachment; existing files are never overwritten |
+| `/download #3 [/save/path]` | Download and decrypt an attachment. The XDG Downloads directory is the default, and existing files are never overwritten. |
 | `/search [query]` | Search cached messages, then jump to a result |
 | `/history` | Load another page of room history |
 | `/retry` | Retry queued sends and encrypted messages |

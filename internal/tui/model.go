@@ -85,6 +85,8 @@ type Model struct {
 	reply, thread, edit   string
 	drafts                map[string]string
 	search                []store.Message
+	nextQueuedAt          time.Time
+	queuedTimerAt         time.Time
 	lastTyping            time.Time
 	ctx                   context.Context
 }
@@ -118,6 +120,7 @@ func NewWithSettings(ctx context.Context, b *matrix.Backend, db *store.Store, de
 		m.previews = map[string]*image.NRGBA{demoImageID: decodePreview(demoImage)}
 	}
 	m.reload()
+	m.queuedTimerAt = m.nextQueuedAt
 	return m
 }
 func (m Model) Init() tea.Cmd {
@@ -126,9 +129,9 @@ func (m Model) Init() tea.Cmd {
 		probe = tea.Raw(ansi.RequestPrimaryDeviceAttributes)
 	}
 	if m.demo {
-		return tea.Batch(textarea.Blink, probe)
+		return tea.Batch(textarea.Blink, probe, queuedIndicatorTimer(m.queuedTimerAt))
 	}
-	return tea.Batch(textarea.Blink, probe, m.waitUpdates(), m.waitNotices(), m.waitVerification(), m.waitNotifications())
+	return tea.Batch(textarea.Blink, probe, queuedIndicatorTimer(m.queuedTimerAt), m.waitUpdates(), m.waitNotices(), m.waitVerification(), m.waitNotifications())
 }
 func (m Model) waitUpdates() tea.Cmd {
 	return func() tea.Msg {
@@ -194,9 +197,10 @@ func (m *Model) reload() {
 	if m.current == "" {
 		m.messages = nil
 		m.rendered = nil
+		m.nextQueuedAt = time.Time{}
 		return
 	}
-	messages, e := m.db.Messages(m.current, m.limit)
+	messages, pending, e := m.db.Timeline(m.current, m.limit)
 	if e != nil {
 		m.fail(e)
 		return
@@ -221,14 +225,9 @@ func (m *Model) reload() {
 			}
 		}
 	}
-	pending, e := m.db.Pending()
-	if e != nil {
-		m.fail(e)
-		return
-	}
 	for _, p := range pending {
 		if p.RoomID == m.current && (m.thread == "" || p.Content.GetRelatesTo().GetThreadParent().String() == m.thread) {
-			messages = append(messages, store.Message{ID: p.Txn, RoomID: p.RoomID, Sender: m.userID(), Body: p.Content.Body, Kind: string(p.Content.MsgType), TS: p.TS, Pending: true, Error: p.Error})
+			messages = append(messages, store.Message{ID: p.Txn, RoomID: p.RoomID, Sender: m.userID(), Body: p.Content.Body, Kind: string(p.Content.MsgType), TS: p.TS, Pending: true, Error: p.Error, ImageInfo: p.Content.Info, ReplyTo: p.Content.GetRelatesTo().GetReplyTo().String(), ThreadRoot: p.Content.GetRelatesTo().GetThreadParent().String()})
 		}
 	}
 	sort.SliceStable(messages, func(i, j int) bool {
@@ -350,8 +349,8 @@ func (m *Model) nextRoom(delta int) {
 	m.switchRoom(m.rooms[index].ID)
 }
 
-// nextUnreadRoom follows sidebar order, wrapping once and skipping the current room.
-func (m *Model) nextUnreadRoom() bool {
+// tabRoom follows sidebar order, preferring unread rooms and wrapping at the bottom.
+func (m *Model) tabRoom() bool {
 	index := -1
 	for i, r := range m.rooms {
 		if r.ID == m.current {
@@ -366,7 +365,11 @@ func (m *Model) nextUnreadRoom() bool {
 			return true
 		}
 	}
-	return false
+	if len(m.rooms) < 2 || (index >= 0 && m.rooms[index].Unread > 0) {
+		return false
+	}
+	m.switchRoom(m.rooms[(index+1)%len(m.rooms)].ID)
+	return true
 }
 func (m *Model) selectMessage(delta int) {
 	if len(m.messages) == 0 {
@@ -451,19 +454,46 @@ func (m *Model) history() tea.Cmd {
 		return resultMsg{history: true, err: m.backend.History(ctx, room), text: "Earlier messages loaded"}
 	}
 }
+
+type queuedIndicatorMsg time.Time
+
+func queuedIndicatorTimer(deadline time.Time) tea.Cmd {
+	if deadline.IsZero() {
+		return nil
+	}
+	return tea.Tick(max(0, time.Until(deadline)), func(time.Time) tea.Msg {
+		return queuedIndicatorMsg(deadline)
+	})
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.update(msg)
-	if !m.settings.ImagePreviews {
-		return updated, cmd
-	}
 	next := updated.(Model)
-	next.clampScroll()
-	preview := next.nextImagePreview()
-	return next, tea.Batch(cmd, preview)
+	var queued, preview tea.Cmd
+	if !next.nextQueuedAt.Equal(next.queuedTimerAt) {
+		next.queuedTimerAt = next.nextQueuedAt
+		queued = queuedIndicatorTimer(next.queuedTimerAt)
+	}
+	if next.settings.ImagePreviews {
+		next.clampScroll()
+		preview = next.nextImagePreview()
+	}
+	if queued == nil && preview == nil {
+		return next, cmd
+	}
+	return next, tea.Batch(cmd, queued, preview)
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case queuedIndicatorMsg:
+		if time.Time(v).Equal(m.queuedTimerAt) {
+			m.queuedTimerAt = time.Time{}
+			// Read the outbox again in case the server acknowledged the send
+			// before the refresh notification reached the UI.
+			m.reload()
+		}
+		return m, nil
 	case tea.FocusMsg:
 		m.focused = true
 		return m, m.autoRead()
@@ -677,9 +707,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Tab navigates unread rooms unless the composer is completing a command.
-		if key == "tab" && (len(m.commandMatches()) == 0 || (m.settings.KeyboardMode == "vi" && !m.viInsert)) {
-			if m.nextUnreadRoom() {
+		// Command completion takes precedence over room navigation.
+		matches := m.completions()
+		if key == "tab" && (len(matches) == 0 || (m.settings.KeyboardMode == "vi" && !m.viInsert)) {
+			if m.tabRoom() {
 				return m, m.autoRead()
 			}
 			return m, nil
@@ -707,7 +738,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if matches := m.commandMatches(); len(matches) > 0 {
+		if len(matches) > 0 {
 			switch key {
 			case "up", "down":
 				delta := 1
@@ -717,7 +748,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.completionIndex = (m.completionIndex + delta + len(matches)) % len(matches)
 				return m, nil
 			case "tab", "enter":
-				m.input.SetValue("/" + matches[m.completionIndex%len(matches)] + " ")
+				if key == "enter" && strings.HasPrefix(m.input.Value(), "/download ") {
+					break
+				}
+				m.input.SetValue(matches[m.completionIndex%len(matches)].value)
 				m.input.CursorEnd()
 				m.completionIndex = 0
 				return m, nil
@@ -922,6 +956,24 @@ func (m Model) updateModal(v tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 		return m, nil
+	}
+	if key == "tab" || key == "shift+tab" {
+		var count int
+		switch m.mode {
+		case "rooms":
+			count = len(m.filteredRooms())
+		case "search-results":
+			count = len(m.search)
+		}
+		if count > 0 {
+			index := min(m.promptIndex, count-1)
+			if key == "tab" {
+				m.promptIndex = (index + 1) % count
+			} else {
+				m.promptIndex = (index + count - 1) % count
+			}
+			return m, nil
+		}
 	}
 	if key == "up" {
 		m.promptIndex = max(0, m.promptIndex-1)
