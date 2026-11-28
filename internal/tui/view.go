@@ -206,7 +206,15 @@ func renderMessageBody(text string, width int) []string {
 			}
 			continue
 		}
-		rows = appendWrapped(rows, bodyStyle, "    "+formatInline(raw), width)
+		const messageIndent = "    "
+		text := bodyStyle.Render(formatInline(raw))
+		for i, row := range strings.Split(ansi.Wrap(text, max(1, width-len(messageIndent)), ""), "\n") {
+			indent := messageIndent
+			if i > 0 {
+				indent = messageIndent[:len(messageIndent)/2]
+			}
+			rows = append(rows, indent+row)
+		}
 	}
 	return rows
 }

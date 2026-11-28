@@ -36,6 +36,15 @@ func TestOpeningThreadSchedulesReadReceipt(t *testing.T) {
 	}
 }
 
+func TestMessageContinuationIndent(t *testing.T) {
+	rows := renderMessageBody("abcdefgh ijkl\nnext line", 12)
+	got := ansi.Strip(strings.Join(rows, "\n"))
+	want := "    abcdefgh\n  ijkl\n    next\n  line"
+	if got != want {
+		t.Fatalf("message rows = %q, want %q", got, want)
+	}
+}
+
 func TestLayoutFitsTerminal(t *testing.T) {
 	for _, size := range [][2]int{{36, 14}, {60, 20}, {80, 24}, {120, 40}, {180, 50}} {
 		for _, mode := range []string{"", "help", "rooms", "details", "recover", "search-results"} {
