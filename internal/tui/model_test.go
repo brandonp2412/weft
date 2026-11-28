@@ -269,7 +269,7 @@ func TestTimelineGroupsConsecutiveMessagesBySender(t *testing.T) {
 	m.selected = "2"
 	m.renderTimeline()
 	timeline := ansi.Strip(strings.Join(m.rendered, "\n"))
-	if !strings.Contains(timeline, "    first\n\n▎   second\n\n  @bob:test") {
+	if !strings.Contains(timeline, "    first\n▎   second\n\n  @bob:test") {
 		t.Fatalf("consecutive messages should share a heading and retain selection:\n%s", timeline)
 	}
 	if strings.Count(timeline, "@alice:test") != 3 {

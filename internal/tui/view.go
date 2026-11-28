@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"weft/internal/store"
 )
 
 var (
@@ -71,7 +72,7 @@ func (m *Model) renderTimelineAt(now time.Time) {
 		start := len(m.rendered)
 		t := time.UnixMilli(msg.TS)
 		day := t.Format("Monday, 2 January 2006")
-		grouped := i > 0 && day == date && msg.Sender != "" && msg.Sender == m.messages[i-1].Sender
+		grouped := i > 0 && continuesMessageGroup(msg, m.messages[i-1], day)
 		if day != date {
 			m.rendered = append(m.rendered, "", dimStyle.Render("  ── "+day+" ──"), "")
 			date = day
@@ -135,13 +136,31 @@ func (m *Model) renderTimelineAt(now time.Time) {
 		if msg.Redacted {
 			text = "[message deleted]"
 		}
-		m.rendered = append(m.rendered, renderMessageBody(text, width)...)
+		bodyWidth := width
+		if grouped && (msg.Sender == m.userID() || badge != "") {
+			// Reserve space for delivery labels so acknowledgements keep the same wrapping.
+			bodyWidth = max(10, width-len("  retrying  edited"))
+		}
+		m.rendered = append(m.rendered, renderMessageBody(text, bodyWidth)...)
 		if grouped {
 			if start == len(m.rendered) {
 				m.rendered = append(m.rendered, "  ")
 			}
 			if selected {
 				m.rendered[start] = strings.Replace(m.rendered[start], "  ", style.Render("▎ "), 1)
+			}
+		}
+		if grouped && badge != "" {
+			badgeStyle := dimStyle
+			if msg.Pending && msg.Error != "" {
+				badgeStyle = lipgloss.NewStyle().Foreground(red)
+			}
+			last := len(m.rendered) - 1
+			remaining := m.mainWidth() - 2 - ansi.StringWidth(m.rendered[last])
+			if remaining >= ansi.StringWidth(badge) {
+				m.rendered[last] += badgeStyle.Render(badge)
+			} else {
+				m.rendered = append(m.rendered, badgeStyle.Render(clip("  "+badge, m.mainWidth()-2)))
 			}
 		}
 		if m.settings.ImagePreviews && !msg.Redacted && msg.Kind == "m.image" {
@@ -154,18 +173,16 @@ func (m *Model) renderTimelineAt(now time.Time) {
 		if msg.Reactions != "" {
 			m.rendered = append(m.rendered, accentStyle.Render(clip("    "+oneLine(msg.Reactions), width+4)))
 		}
-		// Grouped delivery labels occupy the existing separator, never an extra row.
-		separator := ""
-		if grouped && badge != "" {
-			badgeStyle := dimStyle
-			if msg.Pending && msg.Error != "" {
-				badgeStyle = lipgloss.NewStyle().Foreground(red)
-			}
-			separator = badgeStyle.Render(clip("  "+badge, m.mainWidth()-2))
+		if i+1 == len(m.messages) || !continuesMessageGroup(msg, m.messages[i+1], day) {
+			m.rendered = append(m.rendered, "")
 		}
-		m.rendered = append(m.rendered, separator)
 		m.spans[msg.ID] = [2]int{start, len(m.rendered)}
 	}
+}
+
+func continuesMessageGroup(msg, adjacent store.Message, day string) bool {
+	return msg.Sender != "" && msg.Sender == adjacent.Sender &&
+		day == time.UnixMilli(adjacent.TS).Format("Monday, 2 January 2006")
 }
 
 func renderMessageBody(text string, width int) []string {
